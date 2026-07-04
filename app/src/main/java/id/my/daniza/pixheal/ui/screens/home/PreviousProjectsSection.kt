@@ -134,7 +134,7 @@ private fun ProjectThumbnailCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = dateFormat.format(Date(project.createdAt)),
+                    text = "${project.stepCount} edits · ${dateFormat.format(Date(project.lastEditedAt))}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1

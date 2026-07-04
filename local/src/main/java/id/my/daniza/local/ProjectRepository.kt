@@ -13,7 +13,17 @@ class ProjectRepository @Inject constructor(
 
     suspend fun getProjectById(id: Long): ProjectEntity? = projectDao.getProjectById(id)
 
-    suspend fun insertProject(project: ProjectEntity): Long = projectDao.insertProject(project)
+    suspend fun createProject(
+        name: String,
+        sourceImageUri: String,
+    ): Long {
+        val entity = ProjectEntity(
+            name = name,
+            sourceImageUri = sourceImageUri,
+            status = "draft",
+        )
+        return projectDao.insertProject(entity)
+    }
 
     suspend fun updateProject(project: ProjectEntity) = projectDao.updateProject(project)
 

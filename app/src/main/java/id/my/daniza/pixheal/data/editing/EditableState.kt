@@ -4,9 +4,9 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class EditableState(
+    val projectId: Long,
     val history: List<EditStep> = emptyList(),
     val redoStack: List<EditStep> = emptyList(),
-    val currentNodeIndex: Int = -1,
 )
 
 @Serializable
