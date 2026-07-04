@@ -48,6 +48,7 @@ android {
 
 dependencies {
     implementation(project(":litert"))
+    implementation(project(":local"))
     implementation(platform(libs.firebase.bom))
     implementation(libs.androidx.compose.ui.text.google.fonts)
     implementation(libs.firebase.crashlytics.ndk)
