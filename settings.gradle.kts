@@ -24,4 +24,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "PixHeal"
 include(":app")
- 
+include(":litert")
+include(":local")
