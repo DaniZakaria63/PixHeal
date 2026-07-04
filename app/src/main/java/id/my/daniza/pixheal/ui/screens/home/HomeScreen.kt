@@ -32,16 +32,22 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
 
 @Composable
-fun HomeScreen() {
+fun HomeScreen(
+    viewModel: HomeViewModel = hiltViewModel(),
+    onNavigateToEdit: (android.net.Uri) -> Unit = {},
+) {
     var searchQuery by remember { mutableStateOf("") }
-    var selectedImageUri by remember { mutableStateOf<android.net.Uri?>(null) }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
-        selectedImageUri = uri
+        uri?.let {
+            viewModel.createNewProject(it)
+            onNavigateToEdit(it)
+        }
     }
 
     Scaffold(

@@ -1,37 +1,21 @@
 package id.my.daniza.local
 
-import java.time.LocalDateTime
+import kotlinx.coroutines.flow.Flow
+import javax.inject.Inject
+import javax.inject.Singleton
 
-/**
- * Repository for previous project data.
- * Currently returns in-memory data. Will be backed by Room/DataStore for persistence.
- */
-class ProjectRepository {
+@Singleton
+class ProjectRepository @Inject constructor(
+    private val projectDao: ProjectDao
+) {
 
-    fun getProjects(): List<Project> = listOf(
-        Project(
-            id = 1,
-            name = "Wedding Photo",
-            templateType = "Super Resolution",
-            createdAt = LocalDateTime.now().minusDays(2),
-        ),
-        Project(
-            id = 2,
-            name = "Old Family Portrait",
-            templateType = "Photo Restore",
-            createdAt = LocalDateTime.now().minusDays(5),
-        ),
-        Project(
-            id = 3,
-            name = "Vintage Car",
-            templateType = "Colorize",
-            createdAt = LocalDateTime.now().minusWeeks(1),
-        ),
-        Project(
-            id = 4,
-            name = "Street Scene",
-            templateType = "Denoise",
-            createdAt = LocalDateTime.now().minusWeeks(2),
-        ),
-    )
+    fun getAllProjects(): Flow<List<ProjectEntity>> = projectDao.getAllProjects()
+
+    suspend fun getProjectById(id: Long): ProjectEntity? = projectDao.getProjectById(id)
+
+    suspend fun insertProject(project: ProjectEntity): Long = projectDao.insertProject(project)
+
+    suspend fun updateProject(project: ProjectEntity) = projectDao.updateProject(project)
+
+    suspend fun deleteProject(id: Long) = projectDao.deleteProject(id)
 }
