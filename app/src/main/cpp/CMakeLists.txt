@@ -14,12 +14,12 @@ set_target_properties(tensorflowlite_jni PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${LITERT_INCLUDE_DIR}"
 )
 
-# ── litert_core static library (our C++ image processing module) ──────
+# ── litert_core — pure C++ model handler, zero JNI dependencies ───────
 add_library(litert_core STATIC
     litert/model_loader.cpp
     litert/image_processor.cpp
     litert/inference_runner.cpp
-    litert/litert.cpp
+    litert/litert_bridge.cpp
 )
 
 target_include_directories(litert_core PUBLIC
@@ -29,18 +29,18 @@ target_include_directories(litert_core PUBLIC
 
 target_link_libraries(litert_core PUBLIC
     tensorflowlite_jni
-    android
     log
-    jnigraphics
 )
 
-# ── Main shared library ───────────────────────────────────────────────
+# ── Main shared library (JNI boundary + existing native-lib) ──────────
 add_library(${CMAKE_PROJECT_NAME} SHARED
     native-lib.cpp
+    litert/litert.cpp
 )
 
 target_link_libraries(${CMAKE_PROJECT_NAME}
     litert_core
     android
     log
+    jnigraphics
 )
