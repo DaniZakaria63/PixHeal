@@ -22,7 +22,7 @@ object LocalModule {
             context,
             PixHealDatabase::class.java,
             "pixheal.db"
-        ).build()
+        ).fallbackToDestructiveMigration(true).build()
     }
 
     @Provides
