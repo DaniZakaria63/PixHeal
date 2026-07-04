@@ -1,6 +1,6 @@
 // litert.cpp — Single JNI boundary for the LiteRT module.
-// Only handles JNI ↔ C++ type conversion. All model logic lives in litert_bridge.cpp.
-// Kotlin only talks to this file.
+// Allocates LitertBridge instances on the heap, returns opaque jlong handles
+// to Kotlin. Kotlin owns the lifecycle — must call nativeClose(handle) to free.
 
 #include "litert_bridge.h"
 
@@ -11,11 +11,22 @@
 #include <jni.h>
 
 #include <cstring>
+#include <unordered_map>
 #include <vector>
 
 #define LOG_TAG "litert"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+// ── Instance registry ────────────────────────────────────────────────────
+
+static std::unordered_map<jlong, std::unique_ptr<litert::LitertBridge>> registry;
+static jlong nextHandle = 1;
+
+static litert::LitertBridge* getBridge(jlong handle) {
+    auto it = registry.find(handle);
+    return (it != registry.end()) ? it->second.get() : nullptr;
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -65,7 +76,7 @@ static const uint8_t* lockBitmap(JNIEnv* env, jobject bitmap,
 
 extern "C" {
 
-JNIEXPORT jboolean JNICALL
+JNIEXPORT jlong JNICALL
 Java_id_my_daniza_pixheal_litert_LitertBridge_nativeLoadModel(
     JNIEnv* env, jclass /*clazz*/,
     jobject assetManager, jstring modelName, jint modelType) {
@@ -78,41 +89,51 @@ Java_id_my_daniza_pixheal_litert_LitertBridge_nativeLoadModel(
     auto modelData = readAssetFile(env, assetManager, nameStr);
     if (modelData.empty()) {
         LOGE("Failed to read model file");
-        return JNI_FALSE;
+        return 0;
     }
     LOGI("Model file size: %zu bytes", modelData.size());
 
+    auto bridge = std::make_unique<litert::LitertBridge>();
     auto type = static_cast<litert::ModelType>(modelType);
-    bool ok = litert::LitertBridge::getInstance().loadModel(
-        modelData.data(), modelData.size(), type);
-
-    if (ok) {
-        auto& info = litert::LitertBridge::getInstance().getModelInfo();
-        LOGI("Model loaded. Input: %dx%dx%d, Output: %dx%dx%d",
-             info.inputWidth, info.inputHeight, info.inputChannels,
-             info.outputWidth, info.outputHeight, info.outputChannels);
+    if (!bridge->loadModel(modelData.data(), modelData.size(), type)) {
+        LOGE("TfLite model creation failed");
+        return 0;
     }
-    return ok ? JNI_TRUE : JNI_FALSE;
+
+    jlong handle = nextHandle++;
+    registry[handle] = std::move(bridge);
+
+    auto& info = registry[handle]->getModelInfo();
+    LOGI("Model loaded (handle=%lld). Input: %dx%dx%d, Output: %dx%dx%d",
+         static_cast<long long>(handle),
+         info.inputWidth, info.inputHeight, info.inputChannels,
+         info.outputWidth, info.outputHeight, info.outputChannels);
+    return handle;
 }
 
 JNIEXPORT jboolean JNICALL
 Java_id_my_daniza_pixheal_litert_LitertBridge_nativeRunSuperRes(
     JNIEnv* env, jclass /*clazz*/,
-    jobject bitmap, jfloatArray output) {
+    jlong handle, jobject bitmap, jfloatArray output) {
+
+    auto* bridge = getBridge(handle);
+    if (!bridge) {
+        LOGE("Invalid handle: %lld", static_cast<long long>(handle));
+        return JNI_FALSE;
+    }
 
     AndroidBitmapInfo info;
     int width = 0, height = 0, stride = 0;
     const uint8_t* pixels = lockBitmap(env, bitmap, &info, &width, &height, &stride);
     if (!pixels) return JNI_FALSE;
 
-    auto& bridge = litert::LitertBridge::getInstance();
-    const auto& modelInfo = bridge.getModelInfo();
+    const auto& modelInfo = bridge->getModelInfo();
     int outputSize = modelInfo.outputHeight * modelInfo.outputWidth
                      * modelInfo.outputChannels;
     std::vector<float> outputFloat(outputSize);
 
-    bool ok = bridge.runSuperResInference(pixels, width, height, stride,
-                                           outputFloat.data());
+    bool ok = bridge->runSuperResInference(pixels, width, height, stride,
+                                            outputFloat.data());
     AndroidBitmap_unlockPixels(env, bitmap);
 
     if (!ok) {
@@ -127,7 +148,13 @@ Java_id_my_daniza_pixheal_litert_LitertBridge_nativeRunSuperRes(
 JNIEXPORT jboolean JNICALL
 Java_id_my_daniza_pixheal_litert_LitertBridge_nativeRunInpainting(
     JNIEnv* env, jclass /*clazz*/,
-    jobject imageBitmap, jobject maskBitmap, jfloatArray output) {
+    jlong handle, jobject imageBitmap, jobject maskBitmap, jfloatArray output) {
+
+    auto* bridge = getBridge(handle);
+    if (!bridge) {
+        LOGE("Invalid handle: %lld", static_cast<long long>(handle));
+        return JNI_FALSE;
+    }
 
     AndroidBitmapInfo imgInfo, maskInfo;
     int imgW = 0, imgH = 0, imgStride = 0;
@@ -144,15 +171,14 @@ Java_id_my_daniza_pixheal_litert_LitertBridge_nativeRunInpainting(
         return JNI_FALSE;
     }
 
-    auto& bridge = litert::LitertBridge::getInstance();
-    const auto& modelInfo = bridge.getModelInfo();
+    const auto& modelInfo = bridge->getModelInfo();
     int outputSize = modelInfo.outputHeight * modelInfo.outputWidth
                      * modelInfo.outputChannels;
     std::vector<float> outputFloat(outputSize);
 
-    bool ok = bridge.runInpaintingInference(imgPixels, imgW, imgH, imgStride,
-                                             maskPixels, maskW, maskH, maskStride,
-                                             outputFloat.data());
+    bool ok = bridge->runInpaintingInference(imgPixels, imgW, imgH, imgStride,
+                                              maskPixels, maskW, maskH, maskStride,
+                                              outputFloat.data());
 
     AndroidBitmap_unlockPixels(env, imageBitmap);
     AndroidBitmap_unlockPixels(env, maskBitmap);
@@ -168,13 +194,13 @@ Java_id_my_daniza_pixheal_litert_LitertBridge_nativeRunInpainting(
 
 JNIEXPORT jintArray JNICALL
 Java_id_my_daniza_pixheal_litert_LitertBridge_nativeGetInputShape(
-    JNIEnv* env, jclass /*clazz*/) {
+    JNIEnv* env, jclass /*clazz*/, jlong handle) {
 
-    auto& bridge = litert::LitertBridge::getInstance();
-    if (!bridge.isLoaded()) {
+    auto* bridge = getBridge(handle);
+    if (!bridge || !bridge->isLoaded()) {
         return nullptr;
     }
-    const auto& info = bridge.getModelInfo();
+    const auto& info = bridge->getModelInfo();
     jintArray result = env->NewIntArray(4);
     jint shape[4] = {1, info.inputHeight, info.inputWidth, info.inputChannels};
     env->SetIntArrayRegion(result, 0, 4, shape);
@@ -183,9 +209,13 @@ Java_id_my_daniza_pixheal_litert_LitertBridge_nativeGetInputShape(
 
 JNIEXPORT void JNICALL
 Java_id_my_daniza_pixheal_litert_LitertBridge_nativeClose(
-    JNIEnv* /*env*/, jclass /*clazz*/) {
+    JNIEnv* /*env*/, jclass /*clazz*/, jlong handle) {
 
-    litert::LitertBridge::getInstance().close();
+    auto it = registry.find(handle);
+    if (it != registry.end()) {
+        LOGI("Closing model (handle=%lld)", static_cast<long long>(handle));
+        registry.erase(it);
+    }
 }
 
 } // extern "C"

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "model_loader.h"
+#include "image_processor.h"
+#include "inference_runner.h"
 
 #include <cstdint>
 #include <memory>
@@ -10,7 +12,7 @@ namespace litert {
 
 class LitertBridge {
 public:
-    static LitertBridge& getInstance();
+    LitertBridge() = default;
 
     bool loadModel(const uint8_t* modelData, size_t modelSize, ModelType type);
     bool isLoaded() const;
@@ -22,11 +24,8 @@ public:
                                 int imgStride,
                                 const uint8_t* maskPixels, int maskWidth, int maskHeight,
                                 int maskStride, float* output);
-    void close();
 
 private:
-    LitertBridge() = default;
-
     std::unique_ptr<ModelLoader> modelLoader_;
     bool modelLoaded_ = false;
 

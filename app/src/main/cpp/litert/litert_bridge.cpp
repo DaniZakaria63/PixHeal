@@ -1,15 +1,8 @@
 #include "litert_bridge.h"
-#include "image_processor.h"
-#include "inference_runner.h"
 
 #include <cstring>
 
 namespace litert {
-
-LitertBridge& LitertBridge::getInstance() {
-    static LitertBridge instance;
-    return instance;
-}
 
 std::vector<uint8_t> LitertBridge::extractPixelsARGB(const uint8_t* pixelData,
                                                       int width, int height, int stride) {
@@ -23,7 +16,7 @@ std::vector<uint8_t> LitertBridge::extractPixelsARGB(const uint8_t* pixelData,
 }
 
 bool LitertBridge::loadModel(const uint8_t* modelData, size_t modelSize, ModelType type) {
-    close();
+    modelLoaded_ = false;
     modelLoader_ = std::make_unique<ModelLoader>();
     if (!modelLoader_->loadFromBuffer(modelData, modelSize, type)) {
         modelLoader_.reset();
@@ -75,14 +68,6 @@ bool LitertBridge::runInpaintingInference(const uint8_t* imagePixels,
                                            preprocessed.image.data(),
                                            preprocessed.mask.data(),
                                            output);
-}
-
-void LitertBridge::close() {
-    if (modelLoader_) {
-        modelLoader_->close();
-        modelLoader_.reset();
-    }
-    modelLoaded_ = false;
 }
 
 } // namespace litert
