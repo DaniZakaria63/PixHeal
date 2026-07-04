@@ -81,7 +81,7 @@ static const uint8_t* lockBitmap(JNIEnv* env, jobject bitmap,
 extern "C" {
 
 JNIEXPORT jlong JNICALL
-Java_id_my_daniza_pixheal_litert_LitertBridge_nativeLoadModel(
+Java_id_my_daniza_litert_LitertBridge_nativeLoadModel(
     JNIEnv* env, jclass /*clazz*/,
     jobject assetManager, jstring modelName, jint modelType, jintArray outShape) {
 
@@ -121,7 +121,7 @@ Java_id_my_daniza_pixheal_litert_LitertBridge_nativeLoadModel(
 }
 
 JNIEXPORT jfloatArray JNICALL
-Java_id_my_daniza_pixheal_litert_LitertBridge_nativeRunSuperRes(
+Java_id_my_daniza_litert_LitertBridge_nativeRunSuperRes(
     JNIEnv* env, jclass /*clazz*/,
     jlong handle, jobject bitmap) {
 
@@ -150,7 +150,7 @@ Java_id_my_daniza_pixheal_litert_LitertBridge_nativeRunSuperRes(
 }
 
 JNIEXPORT jfloatArray JNICALL
-Java_id_my_daniza_pixheal_litert_LitertBridge_nativeRunInpainting(
+Java_id_my_daniza_litert_LitertBridge_nativeRunInpainting(
     JNIEnv* env, jclass /*clazz*/,
     jlong handle, jobject imageBitmap, jobject maskBitmap) {
 
@@ -192,7 +192,7 @@ Java_id_my_daniza_pixheal_litert_LitertBridge_nativeRunInpainting(
 }
 
 JNIEXPORT jintArray JNICALL
-Java_id_my_daniza_pixheal_litert_LitertBridge_nativeGetInputShape(
+Java_id_my_daniza_litert_LitertBridge_nativeGetInputShape(
     JNIEnv* env, jclass /*clazz*/, jlong handle) {
 
     auto bridge = getBridge(handle);
@@ -207,7 +207,7 @@ Java_id_my_daniza_pixheal_litert_LitertBridge_nativeGetInputShape(
 }
 
 JNIEXPORT void JNICALL
-Java_id_my_daniza_pixheal_litert_LitertBridge_nativeClose(
+Java_id_my_daniza_litert_LitertBridge_nativeClose(
     JNIEnv* /*env*/, jclass /*clazz*/, jlong handle) {
 
     std::shared_ptr<litert::LitertBridge> toDelete;

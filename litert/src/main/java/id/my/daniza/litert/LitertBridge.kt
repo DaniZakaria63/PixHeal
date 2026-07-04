@@ -1,4 +1,4 @@
-package id.my.daniza.pixheal.litert
+package id.my.daniza.litert
 
 import android.content.res.AssetManager
 import android.graphics.Bitmap
@@ -14,7 +14,6 @@ class LitertBridge : Closeable {
     @Volatile
     private var nativeHandle: Long = 0
 
-    // Cached from model load — shape doesn't change during lifetime
     @Volatile private var outputWidth: Int = 0
     @Volatile private var outputHeight: Int = 0
 
@@ -53,8 +52,6 @@ class LitertBridge : Closeable {
         }
     }
 
-    // ── Bitmap conversion ────────────────────────────────────────────
-
     private fun tensorToBitmap(tensor: FloatArray, width: Int, height: Int): Bitmap {
         val pixels = IntArray(width * height)
         for (i in pixels.indices) {
@@ -68,7 +65,7 @@ class LitertBridge : Closeable {
 
     companion object {
         init {
-            System.loadLibrary("pixheal")
+            System.loadLibrary("litert")
         }
     }
 

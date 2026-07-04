@@ -4,8 +4,6 @@ plugins {
     alias(libs.plugins.crashlytics)
 }
 
-apply(from = "litert.gradle.kts")
-
 android {
     namespace = "id.my.daniza.pixheal"
     compileSdk = 37
@@ -18,15 +16,6 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
-        }
-        externalNativeBuild {
-            cmake {
-                cppFlags += "-std=c++17"
-                arguments += "-DLITERT_SDK_DIR=${layout.projectDirectory}/src/main/cpp/litert_sdk"
-            }
-        }
     }
 
     flavorDimensions += "env"
@@ -37,12 +26,6 @@ android {
         }
         create("prod") {
             dimension = "env"
-        }
-    }
-
-    sourceSets {
-        getByName("main") {
-            jniLibs.srcDirs("src/main/cpp/litert_sdk/jni")
         }
     }
 
@@ -57,18 +40,13 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
     buildFeatures {
         viewBinding = true
     }
 }
 
 dependencies {
+    implementation(project(":litert"))
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.crashlytics.ndk)
     implementation(libs.androidx.appcompat)

@@ -1,4 +1,4 @@
-package id.my.daniza.pixheal.litert
+package id.my.daniza.litert
 
 data class ModelConfig(
     val inputWidth: Int,
