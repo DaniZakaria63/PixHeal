@@ -1,5 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
+    alias(libs.plugins.google.services)
+    alias(libs.plugins.crashlytics)
 }
 
 apply(from = "litert.gradle.kts")
@@ -24,6 +26,17 @@ android {
                 cppFlags += "-std=c++17"
                 arguments += "-DLITERT_SDK_DIR=${layout.projectDirectory}/src/main/cpp/litert_sdk"
             }
+        }
+    }
+
+    flavorDimensions += "env"
+    productFlavors {
+        create("dev") {
+            dimension = "env"
+            applicationIdSuffix = ".dev"
+        }
+        create("prod") {
+            dimension = "env"
         }
     }
 
@@ -56,6 +69,8 @@ android {
 }
 
 dependencies {
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.crashlytics.ndk)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.constraintlayout)
     implementation(libs.androidx.core.ktx)
