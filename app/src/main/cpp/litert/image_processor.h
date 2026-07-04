@@ -29,11 +29,6 @@ public:
         int srcWidth, int srcHeight,
         int targetWidth, int targetHeight);
 
-    // Post-process: output float [0,1] NHWC → ARGB_8888 bytes
-    // Used for both models since both output [0,1] RGB.
-    static std::vector<uint8_t> postprocessToARGB(
-        const float* output, int outWidth, int outHeight);
-
 private:
     static void resizeBilinear(const uint8_t* src, int sw, int sh, int sc,
                                uint8_t* dst, int dw, int dh);

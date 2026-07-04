@@ -11,46 +11,59 @@ class LitertBridge : Closeable {
         INPAINTING(1)
     }
 
+    @Volatile
     private var nativeHandle: Long = 0
+
+    // Cached from model load — shape doesn't change during lifetime
+    @Volatile private var outputWidth: Int = 0
+    @Volatile private var outputHeight: Int = 0
 
     val isLoaded get() = nativeHandle != 0L
 
     fun loadModel(assetManager: AssetManager, modelName: String, type: ModelType) {
         close()
-        nativeHandle = nativeLoadModel(assetManager, modelName, type.value)
+        val outShape = IntArray(2)
+        nativeHandle = nativeLoadModel(assetManager, modelName, type.value, outShape)
         if (nativeHandle == 0L) throw RuntimeException("Failed to load model: $modelName")
+        outputWidth = outShape[0]
+        outputHeight = outShape[1]
     }
 
-    fun runSuperRes(bitmap: Bitmap, output: FloatArray): Boolean {
-        checkLoaded()
-        return nativeRunSuperRes(nativeHandle, bitmap, output)
+    fun runSuperRes(bitmap: Bitmap): Bitmap? {
+        val handle = nativeHandle
+        if (handle == 0L) return null
+        val tensor = nativeRunSuperRes(handle, bitmap) ?: return null
+        return tensorToBitmap(tensor, outputWidth, outputHeight)
     }
 
-    fun runInpainting(imageBitmap: Bitmap, maskBitmap: Bitmap, output: FloatArray): Boolean {
-        checkLoaded()
-        return nativeRunInpainting(nativeHandle, imageBitmap, maskBitmap, output)
-    }
-
-    fun getInputShape(): IntArray? {
-        checkLoaded()
-        return nativeGetInputShape(nativeHandle)
+    fun runInpainting(imageBitmap: Bitmap, maskBitmap: Bitmap): Bitmap? {
+        val handle = nativeHandle
+        if (handle == 0L) return null
+        val tensor = nativeRunInpainting(handle, imageBitmap, maskBitmap) ?: return null
+        return tensorToBitmap(tensor, outputWidth, outputHeight)
     }
 
     override fun close() {
-        if (nativeHandle != 0L) {
-            nativeClose(nativeHandle)
+        val handle = nativeHandle
+        if (handle != 0L) {
             nativeHandle = 0
+            outputWidth = 0
+            outputHeight = 0
+            nativeClose(handle)
         }
     }
 
-    private fun checkLoaded() {
-        check(nativeHandle != 0L) { "Model not loaded" }
-    }
+    // ── Bitmap conversion ────────────────────────────────────────────
 
-    protected fun finalize() {
-        if (nativeHandle != 0L) {
-            nativeClose(nativeHandle)
+    private fun tensorToBitmap(tensor: FloatArray, width: Int, height: Int): Bitmap {
+        val pixels = IntArray(width * height)
+        for (i in pixels.indices) {
+            val r = (tensor[i * 3 + 0] * 255).toInt().coerceIn(0, 255)
+            val g = (tensor[i * 3 + 1] * 255).toInt().coerceIn(0, 255)
+            val b = (tensor[i * 3 + 2] * 255).toInt().coerceIn(0, 255)
+            pixels[i] = 0xFF000000.toInt() or (r shl 16) or (g shl 8) or b
         }
+        return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
     }
 
     companion object {
@@ -64,23 +77,17 @@ class LitertBridge : Closeable {
     private external fun nativeLoadModel(
         assetManager: AssetManager,
         modelName: String,
-        modelType: Int
+        modelType: Int,
+        outShape: IntArray
     ): Long
 
-    private external fun nativeRunSuperRes(
-        handle: Long,
-        bitmap: Bitmap,
-        output: FloatArray
-    ): Boolean
+    private external fun nativeRunSuperRes(handle: Long, bitmap: Bitmap): FloatArray?
 
     private external fun nativeRunInpainting(
         handle: Long,
         imageBitmap: Bitmap,
-        maskBitmap: Bitmap,
-        output: FloatArray
-    ): Boolean
-
-    private external fun nativeGetInputShape(handle: Long): IntArray?
+        maskBitmap: Bitmap
+    ): FloatArray?
 
     private external fun nativeClose(handle: Long)
 }

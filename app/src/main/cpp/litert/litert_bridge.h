@@ -18,12 +18,13 @@ public:
     bool isLoaded() const;
     const ModelInfo& getModelInfo() const;
 
-    bool runSuperResInference(const uint8_t* pixelData, int width, int height,
-                              int stride, float* output);
-    bool runInpaintingInference(const uint8_t* imagePixels, int imgWidth, int imgHeight,
-                                int imgStride,
-                                const uint8_t* maskPixels, int maskWidth, int maskHeight,
-                                int maskStride, float* output);
+    // Runs inference. Returns float32 tensor — Kotlin handles bitmap creation.
+    std::vector<float> runSuperRes(const uint8_t* pixelData, int width, int height,
+                                   int stride);
+    std::vector<float> runInpainting(const uint8_t* imagePixels,
+                                     int imgWidth, int imgHeight, int imgStride,
+                                     const uint8_t* maskPixels,
+                                     int maskWidth, int maskHeight, int maskStride);
 
 private:
     std::unique_ptr<ModelLoader> modelLoader_;

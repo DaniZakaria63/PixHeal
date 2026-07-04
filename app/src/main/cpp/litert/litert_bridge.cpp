@@ -34,9 +34,9 @@ const ModelInfo& LitertBridge::getModelInfo() const {
     return modelLoader_->getModelInfo();
 }
 
-bool LitertBridge::runSuperResInference(const uint8_t* pixelData, int width, int height,
-                                         int stride, float* output) {
-    if (!modelLoaded_) return false;
+std::vector<float> LitertBridge::runSuperRes(const uint8_t* pixelData,
+                                              int width, int height, int stride) {
+    if (!modelLoaded_) return {};
 
     auto packed = extractPixelsARGB(pixelData, width, height, stride);
     const auto& info = modelLoader_->getModelInfo();
@@ -44,16 +44,23 @@ bool LitertBridge::runSuperResInference(const uint8_t* pixelData, int width, int
     auto input = ImageProcessor::preprocessSuperRes(
         packed.data(), width, height, info.inputWidth, info.inputHeight);
 
-    return InferenceRunner::runSuperRes(modelLoader_->getInterpreter(),
-                                         input.data(), output);
+    int outputSize = info.outputHeight * info.outputWidth * info.outputChannels;
+    std::vector<float> output(outputSize);
+
+    if (!InferenceRunner::runSuperRes(modelLoader_->getInterpreter(),
+                                       input.data(), output.data())) {
+        return {};
+    }
+    return output;
 }
 
-bool LitertBridge::runInpaintingInference(const uint8_t* imagePixels,
-                                           int imgWidth, int imgHeight, int imgStride,
-                                           const uint8_t* maskPixels,
-                                           int maskWidth, int maskHeight, int maskStride,
-                                           float* output) {
-    if (!modelLoaded_) return false;
+std::vector<float> LitertBridge::runInpainting(const uint8_t* imagePixels,
+                                                int imgWidth, int imgHeight,
+                                                int imgStride,
+                                                const uint8_t* maskPixels,
+                                                int maskWidth, int maskHeight,
+                                                int maskStride) {
+    if (!modelLoaded_) return {};
 
     auto imgPacked = extractPixelsARGB(imagePixels, imgWidth, imgHeight, imgStride);
     auto maskPacked = extractPixelsARGB(maskPixels, maskWidth, maskHeight, maskStride);
@@ -64,10 +71,16 @@ bool LitertBridge::runInpaintingInference(const uint8_t* imagePixels,
         imgWidth, imgHeight,
         info.inputWidth, info.inputHeight);
 
-    return InferenceRunner::runInpainting(modelLoader_->getInterpreter(),
-                                           preprocessed.image.data(),
-                                           preprocessed.mask.data(),
-                                           output);
+    int outputSize = info.outputHeight * info.outputWidth * info.outputChannels;
+    std::vector<float> output(outputSize);
+
+    if (!InferenceRunner::runInpainting(modelLoader_->getInterpreter(),
+                                         preprocessed.image.data(),
+                                         preprocessed.mask.data(),
+                                         output.data())) {
+        return {};
+    }
+    return output;
 }
 
 } // namespace litert
