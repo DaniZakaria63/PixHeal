@@ -2,26 +2,34 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
+apply(from = "litert.gradle.kts")
+
 android {
     namespace = "id.my.daniza.pixheal"
-    compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
-    }
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "id.my.daniza.pixheal"
         minSdk = 27
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 1
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+        }
         externalNativeBuild {
             cmake {
-                cppFlags += "-std=c++14"
+                cppFlags += "-std=c++17"
+                arguments += "-DLITERT_SDK_DIR=${layout.projectDirectory}/src/main/cpp/litert_sdk"
             }
+        }
+    }
+
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDirs("src/main/cpp/litert_sdk/jni")
         }
     }
 
