@@ -2,6 +2,7 @@ package id.my.daniza.pixheal.ui.screens.edit
 
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.filled.LayersClear
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,8 +41,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -148,17 +158,36 @@ fun EditScreen(
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            // ── Zoomable + pannable image canvas ──────────────────────
+            var scale by remember { mutableFloatStateOf(1f) }
+            var offset by remember { mutableStateOf(Offset.Zero) }
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .background(
-                        MaterialTheme.colorScheme.surfaceContainerHighest,
-                        MaterialTheme.shapes.medium,
-                    ),
+                    .clip(MaterialTheme.shapes.medium)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                    .pointerInput(Unit) {
+                        detectTransformGestures { centroid, pan, zoom, _ ->
+                            val oldScale = scale
+                            val newScale = (oldScale * zoom).coerceIn(1f, 5f)
+
+                            // The image point under the previous finger position
+                            // should map to the current finger position after zoom
+                            val previousCentroid = centroid - pan
+                            // imagePoint = (previousCentroid - oldOffset) / oldScale
+                            val imagePoint = (previousCentroid - offset) / oldScale
+                            // target: imagePoint * newScale + newOffset = centroid
+                            offset = centroid - imagePoint * newScale
+
+                            scale = newScale
+                        }
+                    },
                 contentAlignment = Alignment.Center,
             ) {
                 val imageUri = uiState.imageUri
+                val resultBitmap = uiState.resultBitmap
 
                 if (imageUri != null) {
                     AsyncImage(
@@ -166,14 +195,26 @@ fun EditScreen(
                         contentDescription = "Image preview",
                         modifier = Modifier
                             .fillMaxSize()
-                            .aspectRatio(1f),
+                            .graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                                translationX = offset.x
+                                translationY = offset.y
+                            },
                         contentScale = ContentScale.Fit,
                     )
                 } else {
-                    Text(
-                        "Loading image...",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Loading project...",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
 
