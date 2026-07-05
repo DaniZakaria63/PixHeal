@@ -21,4 +21,5 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     api("com.google.ai.edge.litert:litert:2.1.0")
+    implementation(libs.timber)
 }
