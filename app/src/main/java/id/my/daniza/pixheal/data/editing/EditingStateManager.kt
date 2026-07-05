@@ -117,13 +117,6 @@ class EditingStateManager @Inject constructor(
         return nextType != EditType.ESRGAN_ENHANCE && nextType != EditType.INPAINTING
     }
 
-    fun deleteProjectFiles(id: Long) {
-        val dir = projectDir(id)
-        if (dir.exists()) dir.deleteRecursively()
-    }
-
-    fun hasStateFile(id: Long): Boolean = stateFile(id).exists()
-
     private fun stateFile(id: Long): File =
         File(projectDir(id), "edit_state.json")
 
