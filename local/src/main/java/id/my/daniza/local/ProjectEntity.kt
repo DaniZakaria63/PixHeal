@@ -11,6 +11,8 @@ data class ProjectEntity(
     val name: String,
     @ColumnInfo(name = "source_image_uri")
     val sourceImageUri: String,
+    @ColumnInfo(name = "thumbnail_uri")
+    val thumbnailUri: String? = null,
     @ColumnInfo(name = "output_image_uri")
     val outputImageUri: String? = null,
     @ColumnInfo(name = "step_count")

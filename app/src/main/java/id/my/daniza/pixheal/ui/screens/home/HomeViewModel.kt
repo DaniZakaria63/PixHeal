@@ -6,11 +6,12 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import id.my.daniza.local.ProjectEntity
 import id.my.daniza.local.ProjectRepository
-import id.my.daniza.pixheal.data.editing.EditingStateManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import androidx.core.net.toUri
 
@@ -22,18 +23,14 @@ sealed class IntegrityResult {
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val projectRepository: ProjectRepository,
-    private val editingStateManager: EditingStateManager,
 ) : ViewModel() {
 
     val projects: StateFlow<List<ProjectEntity>> = projectRepository.getAllProjects()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    suspend fun createNewProject(uri: Uri): Long {
-        val name = "Project ${System.currentTimeMillis()}"
-        return projectRepository.createProject(
-            name = name,
-            sourceImageUri = uri.toString(),
-        )
+    suspend fun createNewProject(uri: Uri): Long = withContext(Dispatchers.IO) {
+        val name = "Project_${System.currentTimeMillis()}"
+        projectRepository.createProject(name = name, sourceUri = uri)
     }
 
     fun openProject(projectId: Long, onResult: (IntegrityResult) -> Unit) {
@@ -52,7 +49,7 @@ class HomeViewModel @Inject constructor(
                 if (sourceUri == null) reasons.add("Source image URI is malformed")
             }
 
-            if (!editingStateManager.hasStateFile(projectId)) {
+            if (!projectRepository.hasStateFile(projectId)) {
                 reasons.add("Editing state file is missing")
             }
 
@@ -66,7 +63,6 @@ class HomeViewModel @Inject constructor(
     fun deleteProject(projectId: Long) {
         viewModelScope.launch {
             projectRepository.deleteProject(projectId)
-            editingStateManager.deleteProjectFiles(projectId)
         }
     }
 }
