@@ -13,10 +13,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -25,6 +28,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,21 +37,58 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
-    onNavigateToEdit: (android.net.Uri) -> Unit = {},
+    onNavigateToEdit: (projectId: Long) -> Unit = {},
 ) {
     var searchQuery by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+    var corruptDialog by remember { mutableStateOf<Pair<Long, List<String>>?>(null) }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
-        uri?.let {
-            viewModel.createNewProject(it)
-            onNavigateToEdit(it)
+        if (uri != null) {
+            scope.launch {
+                val projectId = viewModel.createNewProject(uri)
+                onNavigateToEdit(projectId)
+            }
         }
+    }
+
+    corruptDialog?.let { (projectId, reasons) ->
+        AlertDialog(
+            onDismissRequest = { corruptDialog = null },
+            title = { Text("Corrupt Project") },
+            text = {
+                Column {
+                    Text("This project cannot be opened:")
+                    reasons.forEach { reason ->
+                        Text(
+                            "• $reason",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    viewModel.deleteProject(projectId)
+                    corruptDialog = null
+                }) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { corruptDialog = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     Scaffold(
@@ -131,7 +172,19 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            PreviousProjectsSection()
+            PreviousProjectsSection(
+                onProjectClick = { projectId ->
+                    viewModel.openProject(projectId) { result ->
+                        when (result) {
+                            is IntegrityResult.Valid -> onNavigateToEdit(projectId)
+                            is IntegrityResult.Corrupt -> corruptDialog = result.projectId to result.reasons
+                        }
+                    }
+                },
+                onProjectDelete = { projectId ->
+                    viewModel.deleteProject(projectId)
+                },
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
         }

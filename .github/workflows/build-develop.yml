@@ -1,0 +1,56 @@
+name: Build Develop
+
+on:
+  push:
+    branches: [develop]
+    tags: ["v0.*"]
+
+jobs:
+  develop:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+            echo "APP_VERSION_NAME=$VERSION" >> $GITHUB_ENV
+          else
+            echo "APP_VERSION_NAME=0.0.${{ github.run_number }}" >> $GITHUB_ENV
+          fi
+
+      - name: Build debug APK
+        run: |
+          ./gradlew assembleDevDebug \
+            -PappVersionCode=${{ github.run_number }} \
+            -PappVersionName=$APP_VERSION_NAME
+
+      - name: Create GitHub Release (tagged only)
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Develop ${{ env.APP_VERSION_NAME }}
+          body: |
+            ## Develop Build ${{ env.APP_VERSION_NAME }}
+
+            **Commit:** ${{ github.sha }}
+
+            ### Assets
+            - APK: app-dev-debug.apk
+          files: app/build/outputs/apk/dev/debug/app-dev-debug.apk
+          generate_release_notes: true
