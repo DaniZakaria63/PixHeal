@@ -78,6 +78,10 @@ class ProjectRepository @Inject constructor(
         return stateFile(projectId).exists()
     }
 
+    fun imageFile(projectId: Long): File {
+        return File(projectDir(projectId), "image.jpg")
+    }
+
     fun stateFile(projectId: Long): File {
         return File(projectDir(projectId), "edit_state.json")
     }

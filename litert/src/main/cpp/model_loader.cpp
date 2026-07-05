@@ -21,7 +21,7 @@ bool ModelLoader::loadFromBuffer(const uint8_t* modelData, size_t modelSize, Mod
     }
 
     options_ = TfLiteInterpreterOptionsCreate();
-    TfLiteInterpreterOptionsSetNumThreads(options_, 4);
+    TfLiteInterpreterOptionsSetNumThreads(options_, 1);
 
     interpreter_ = TfLiteInterpreterCreate(model_, options_);
     if (!interpreter_) {
