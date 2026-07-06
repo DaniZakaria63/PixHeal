@@ -68,7 +68,8 @@ class EditViewModel @Inject constructor(
             val before = editingStateManager.getCurrentState()
             editingStateManager.saveSnapshot(before.history.size)
 
-            when (val result = editEffectManager.enhance(uri)) {
+            val qualityMode = _uiState.value.qualityMode
+            when (val result = editEffectManager.enhance(uri, qualityMode)) {
                 is EffectResult.Error -> {
                     _uiState.update { it.copy(isProcessing = false, error = result.message) }
                     return@launch
@@ -154,6 +155,12 @@ class EditViewModel @Inject constructor(
     fun toggleHistory() {
         _uiState.update {
             it.copy(showHistory = !it.showHistory)
+        }
+    }
+
+    fun toggleQualityMode() {
+        _uiState.update {
+            it.copy(qualityMode = !it.qualityMode)
         }
     }
 

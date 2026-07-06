@@ -13,4 +13,5 @@ data class EditUiState(
     val error: String? = null,
     val editHistory: List<EditStep> = emptyList(),
     val showHistory: Boolean = false,
+    val qualityMode: Boolean = false,
 )

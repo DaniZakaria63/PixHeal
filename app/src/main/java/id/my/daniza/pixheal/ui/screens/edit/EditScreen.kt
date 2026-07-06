@@ -2,6 +2,7 @@ package id.my.daniza.pixheal.ui.screens.edit
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,7 +24,7 @@ import androidx.compose.material.icons.filled.BackHand
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.LayersClear
-import androidx.compose.material.icons.filled.ListAlt
+import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -107,7 +108,7 @@ fun EditScreen(
                         Box {
                             IconButton(onClick = { viewModel.toggleHistory() }) {
                                 Icon(
-                                    imageVector = Icons.Filled.ListAlt,
+                                    imageVector = Icons.AutoMirrored.Filled.ListAlt,
                                     contentDescription = "Edit history",
                                     modifier = Modifier.size(20.dp),
                                 )
@@ -313,6 +314,57 @@ fun EditScreen(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Enhance with ESRGAN")
                 }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // ── Quality mode toggle ──────────────────────────────────
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(horizontal = 12.dp),
+            ) {
+                Text(
+                    "Mode:",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "Fast",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (!uiState.qualityMode)
+                        MaterialTheme.colorScheme.primary
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .background(
+                            if (!uiState.qualityMode)
+                                MaterialTheme.colorScheme.primaryContainer
+                            else
+                                MaterialTheme.colorScheme.surfaceContainerHigh,
+                            MaterialTheme.shapes.small,
+                        )
+                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                        .clickable(enabled = !uiState.isProcessing) { viewModel.toggleQualityMode() },
+                )
+                Text(
+                    "Quality",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (uiState.qualityMode)
+                        MaterialTheme.colorScheme.primary
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .background(
+                            if (uiState.qualityMode)
+                                MaterialTheme.colorScheme.primaryContainer
+                            else
+                                MaterialTheme.colorScheme.surfaceContainerHigh,
+                            MaterialTheme.shapes.small,
+                        )
+                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                        .clickable(enabled = !uiState.isProcessing) { viewModel.toggleQualityMode() },
+                )
             }
 
             uiState.error?.let { error ->

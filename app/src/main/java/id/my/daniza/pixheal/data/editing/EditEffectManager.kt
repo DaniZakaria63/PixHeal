@@ -5,13 +5,13 @@ import android.graphics.Bitmap
 import android.graphics.Bitmap.Config
 import android.graphics.BitmapFactory
 import android.net.Uri
-import timber.log.Timber
 import dagger.hilt.android.qualifiers.ApplicationContext
 import id.my.daniza.litert.LitertBridge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -27,8 +27,9 @@ class EditEffectManager @Inject constructor(
 ) {
     private val mutex = Mutex()
 
-    suspend fun enhance(uri: Uri): EffectResult = withContext(Dispatchers.IO) {
-        Timber.i("enhance: uri=$uri")
+    suspend fun enhance(uri: Uri, qualityMode: Boolean = false): EffectResult = withContext(Dispatchers.IO) {
+        val scaleTarget = if (qualityMode) LitertBridge.MODE_QUALITY else LitertBridge.MODE_FAST
+        Timber.i("enhance: %s mode (target=%d)", if (qualityMode) "quality" else "fast", scaleTarget)
         val start = System.currentTimeMillis()
 
         val bitmap = decodeBitmap(uri)
@@ -38,7 +39,7 @@ class EditEffectManager @Inject constructor(
         val loadErr = ensureModelLoaded()
         if (loadErr != null) return@withContext EffectResult.Error("AI model failed to start: $loadErr")
 
-        val result = litertBridge.runSuperRes(bitmap)
+        val result = litertBridge.runSuperRes(bitmap, scaleTarget)
             ?: return@withContext EffectResult.Error("AI inference failed")
 
         val elapsed = System.currentTimeMillis() - start
@@ -47,26 +48,23 @@ class EditEffectManager @Inject constructor(
     }
 
     suspend fun inpaint(imageUri: Uri, maskUri: Uri): EffectResult = withContext(Dispatchers.IO) {
-        Timber.i("inpaint: imageUri=$imageUri maskUri=$maskUri")
+        Timber.i("inpaint: imageUri=%s maskUri=%s", imageUri, maskUri)
         val start = System.currentTimeMillis()
 
         val image = decodeBitmap(imageUri)
             ?: return@withContext EffectResult.Error("Failed to decode image")
         val mask = decodeBitmap(maskUri)
             ?: return@withContext EffectResult.Error("Failed to decode mask")
-        Timber.i("inpaint: decoded image ${image.width}x${image.height} mask ${mask.width}x${mask.height}")
+        Timber.i("inpaint: decoded image %dx%d, mask %dx%d", image.width, image.height, mask.width, mask.height)
 
         val loadErr = ensureModelLoaded()
-        if (loadErr != null) {
-            Timber.e("inpaint: model load error: $loadErr")
-            return@withContext EffectResult.Error("AI model failed to start: $loadErr")
-        }
+        if (loadErr != null) return@withContext EffectResult.Error("AI model failed to start: $loadErr")
 
         val result = litertBridge.runInpainting(image, mask)
-            ?: return@withContext EffectResult.Error("AI inference failed — check image dimensions")
+            ?: return@withContext EffectResult.Error("AI inference failed")
 
         val elapsed = System.currentTimeMillis() - start
-        Timber.i("inpaint: complete in ${elapsed}ms, result=${result.width}x${result.height}")
+        Timber.i("inpaint: done in %dms, output %dx%d", elapsed, result.width, result.height)
         EffectResult.Success(result)
     }
 
@@ -91,11 +89,8 @@ class EditEffectManager @Inject constructor(
                     BitmapFactory.decodeStream(input)
                 }
             }
-        } catch (e: Exception) {
-            null
-        } ?: return null
+        } catch (_: Exception) { null } ?: return null
 
-        // Native code requires ARGB_8888. Ensure format matches.
         if (decoded.config == Config.ARGB_8888) return decoded
         val converted = decoded.copy(Config.ARGB_8888, false)
         decoded.recycle()
