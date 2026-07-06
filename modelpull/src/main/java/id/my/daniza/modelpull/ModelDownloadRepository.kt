@@ -9,6 +9,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.util.zip.ZipInputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -26,8 +27,8 @@ class ModelDownloadRepository @Inject constructor(
 
     suspend fun downloadAotganModel(modelUrl: String): File? {
         isCancelled = false
-        val tempFile = File(modelDirectory, "aotgan.tmp")
         val targetFile = File(modelDirectory, "aotgan.tflite")
+        val metadataFile = File(modelDirectory, "aotgan_metadata.json")
 
         if (targetFile.exists()) {
             _downloadState.value = DownloadState(
@@ -39,6 +40,8 @@ class ModelDownloadRepository @Inject constructor(
         }
 
         _downloadState.value = DownloadState(isDownloading = true, progress = 0f)
+
+        val zipTempFile = File(modelDirectory, "aotgan_zip.tmp")
 
         return try {
             withContext(Dispatchers.IO) {
@@ -58,13 +61,13 @@ class ModelDownloadRepository @Inject constructor(
 
                 val contentLength = body.contentLength()
                 body.byteStream().use { input ->
-                    FileOutputStream(tempFile).use { output ->
+                    FileOutputStream(zipTempFile).use { output ->
                         val buffer = ByteArray(8192)
                         var bytesRead: Long = 0
                         var read: Int
                         while (input.read(buffer).also { read = it } != -1) {
                             if (isCancelled) {
-                                tempFile.delete()
+                                zipTempFile.delete()
                                 _downloadState.value = DownloadState()
                                 return@withContext null
                             }
@@ -72,14 +75,28 @@ class ModelDownloadRepository @Inject constructor(
                             bytesRead += read
                             if (contentLength > 0) {
                                 _downloadState.value = _downloadState.value.copy(
-                                    progress = bytesRead.toFloat() / contentLength
+                                    progress = bytesRead.toFloat() / contentLength * 0.9f
                                 )
                             }
                         }
                     }
                 }
 
-                tempFile.renameTo(targetFile)
+                if (isCancelled) {
+                    zipTempFile.delete()
+                    _downloadState.value = DownloadState()
+                    return@withContext null
+                }
+
+                val extracted = extractAotganZip(zipTempFile, modelDirectory)
+
+                zipTempFile.delete()
+
+                if (!extracted) {
+                    _downloadState.value = DownloadState(error = "No .tflite file found in zip")
+                    return@withContext null
+                }
+
                 _downloadState.value = DownloadState(
                     isComplete = true,
                     modelFile = targetFile,
@@ -88,9 +105,39 @@ class ModelDownloadRepository @Inject constructor(
                 targetFile
             }
         } catch (e: Exception) {
-            tempFile.delete()
+            zipTempFile.delete()
+            targetFile.delete()
+            metadataFile.delete()
             _downloadState.value = DownloadState(error = e.message ?: "Unknown error")
             null
+        }
+    }
+
+    private fun extractAotganZip(zipFile: File, destDir: File): Boolean {
+        var hasTflite = false
+        return try {
+            ZipInputStream(zipFile.inputStream()).use { zis ->
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    if (!entry.isDirectory) {
+                        val fileName = entry.name.substringAfterLast("/")
+                        if (fileName.isNotBlank()) {
+                            val destFile = File(destDir, fileName)
+                            FileOutputStream(destFile).use { fos ->
+                                zis.copyTo(fos)
+                            }
+                            if (fileName.endsWith(".tflite", ignoreCase = true)) {
+                                hasTflite = true
+                            }
+                        }
+                    }
+                    zis.closeEntry()
+                    entry = zis.nextEntry
+                }
+            }
+            hasTflite
+        } catch (_: Exception) {
+            false
         }
     }
 

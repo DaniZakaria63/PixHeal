@@ -13,6 +13,7 @@ import id.my.daniza.pixheal.data.editing.EditStep
 import id.my.daniza.pixheal.data.editing.EditType
 import id.my.daniza.pixheal.data.editing.EditingStateManager
 import id.my.daniza.pixheal.data.editing.EffectResult
+import id.my.daniza.pixheal.data.remoteconfig.RemoteConfigManager
 import id.my.daniza.pixheal.data.ui.EditUiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +34,7 @@ class EditViewModel @Inject constructor(
     private val projectRepository: ProjectRepository,
     private val editEffectManager: EditEffectManager,
     private val modelDownloadRepository: ModelDownloadRepository,
+    private val remoteConfigManager: RemoteConfigManager,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(EditUiState())
@@ -164,7 +166,8 @@ class EditViewModel @Inject constructor(
         }
     }
 
-    fun downloadAotganModel(url: String) {
+    fun downloadAotganModel() {
+        val url = remoteConfigManager.getAotganModelUrl()
         viewModelScope.launch { modelDownloadRepository.downloadAotganModel(url) }
     }
 
