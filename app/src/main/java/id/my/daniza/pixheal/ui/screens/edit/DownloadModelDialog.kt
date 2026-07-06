@@ -20,12 +20,13 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun DownloadModelDialog(
+    showDialog: Boolean,
     onDismiss: () -> Unit,
     viewModel: EditViewModel,
 ) {
     val downloadState by viewModel.downloadState.collectAsState()
 
-    if (!downloadState.isDownloading && !downloadState.isComplete && downloadState.error == null) return
+    if (!showDialog) return
 
     AlertDialog(
         onDismissRequest = {

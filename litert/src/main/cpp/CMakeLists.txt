@@ -1,3 +1,9 @@
+
+
+# DEVELOPER NOTE:
+# LiteRT inference in native is unstable, we move to stable version under LiteRT Maven AAR.
+# >Adjust later when dev has much time.
+
 cmake_minimum_required(VERSION 3.22.1)
 
 project("litert")

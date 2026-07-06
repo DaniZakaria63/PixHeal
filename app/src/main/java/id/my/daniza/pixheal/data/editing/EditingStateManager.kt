@@ -4,6 +4,7 @@ import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import timber.log.Timber
 import java.io.File
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
@@ -11,26 +12,36 @@ import javax.inject.Singleton
 
 private val json = Json { ignoreUnknownKeys = true }
 
+/**
+ * Manages the edit undo/redo DAG for a single project.
+ *
+ * ## Snapshot-based undo
+ *
+ * Each AI operation is destructive (it overwrites the source image). To support
+ * undo we save a **full snapshot** of the image BEFORE every edit step:
+ *
+ *   snapshots/step_0.jpg   → saved before the 1st edit (pristine original)
+ *   snapshots/step_1.jpg   → saved before the 2nd edit
+ *   snapshots/step_2.jpg   → saved before the 3rd edit
+ *   ...
+ *
+ * On undo the snapshot at `history.size` is restored to `image.jpg`.
+ * Redo of AI operations (ESRGAN_ENHANCE, INPAINTING) is permanently blocked
+ * because the intermediate computationally-produced bitmap is lost.
+ */
 @Singleton
 class EditingStateManager @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) {
-
     private val stateRef = AtomicReference<EditableState?>(null)
     private var projectId: Long = 0L
 
-    /**
-     * Loads the JSON file into the in-memory DTO holder.
-     * All subsequent runtime operations mutate this holder directly — no I/O.
-     */
     fun openProject(id: Long): EditableState {
         require(projectId == 0L || projectId == id) {
             "Cannot open project $id while $projectId is active. Call closeProject() first."
         }
-
         projectId = id
         val file = stateFile(id)
-
         val state = if (file.exists()) {
             json.decodeFromString<EditableState>(file.readText())
         } else {
@@ -38,15 +49,11 @@ class EditingStateManager @Inject constructor(
             file.parentFile?.mkdirs()
             fresh
         }
-
         stateRef.set(state)
+        Timber.d("openProject: %d steps in history", state.history.size)
         return state
     }
 
-    /**
-     * Writes the current in-memory DTO to disk once.
-     * Call on project close, app background, or explicit save.
-     */
     fun writeState() {
         val state = stateRef.get() ?: return
         val file = stateFile(projectId)
@@ -54,9 +61,6 @@ class EditingStateManager @Inject constructor(
         file.writeText(json.encodeToString(state))
     }
 
-    /**
-     * Writes to disk then releases the in-memory holder.
-     */
     fun closeProject() {
         if (projectId == 0L) return
         writeState()
@@ -64,7 +68,37 @@ class EditingStateManager @Inject constructor(
         projectId = 0L
     }
 
-    // ── Runtime mutations (in-memory only, lock-free via AtomicReference) ──
+    fun getCurrentState(): EditableState = stateRef.get()
+        ?: throw IllegalStateException("No project opened")
+
+    // ── Snapshot persistence ───────────────────────────────────────────
+
+    /**
+     * Save the current image as a snapshot at [index].
+     * Called BEFORE an edit, so snapshot index = current history size.
+     */
+    fun saveSnapshot(index: Int) {
+        val src = imageFile()
+        if (!src.exists()) return
+        val dst = snapshotFile(index)
+        dst.parentFile?.mkdirs()
+        src.copyTo(dst, overwrite = true)
+        Timber.d("saveSnapshot: step_%d (lastModified=%d)", index, src.lastModified())
+    }
+
+    /**
+     * Restore the snapshot at [index] over the working image.
+     * Called on UNDO, where index = history.size after the step was popped.
+     */
+    fun restoreSnapshot(index: Int) {
+        val snap = snapshotFile(index)
+        val dst = imageFile()
+        if (!snap.exists()) return
+        snap.copyTo(dst, overwrite = true)
+        Timber.d("restoreSnapshot: step_%d → image.jpg", index)
+    }
+
+    // ── Runtime mutations ──────────────────────────────────────────────
 
     fun pushStep(step: EditStep): EditableState {
         val next = stateRef.updateAndGet { current ->
@@ -74,6 +108,18 @@ class EditingStateManager @Inject constructor(
                 redoStack = emptyList(),
             )
         }!!
+        writeState()
+        val keepCount = next.history.size
+        val snapshotsDir = snapshotsDir()
+        if (snapshotsDir.exists()) {
+            snapshotsDir.listFiles()?.forEach { f ->
+                val idx = f.nameWithoutExtension.removePrefix("step_").toIntOrNull()
+                if (idx != null && idx >= keepCount) {
+                    f.delete()
+                    Timber.d("pushStep: cleaned orphan snapshot step_%d", idx)
+                }
+            }
+        }
         return next
     }
 
@@ -81,29 +127,30 @@ class EditingStateManager @Inject constructor(
         val current = stateRef.get() ?: return null
         if (current.history.isEmpty()) return null
         val last = current.history.last()
-        stateRef.set(
-            current.copy(
-                history = current.history.dropLast(1),
-                redoStack = current.redoStack + last,
-            )
+        val next = current.copy(
+            history = current.history.dropLast(1),
+            redoStack = current.redoStack + last,
         )
-        return stateRef.get()
+        stateRef.set(next)
+        writeState()
+        Timber.d("undo: %d steps remain, %d in redo", next.history.size, next.redoStack.size)
+        return next
     }
 
     fun redo(): EditableState? {
         val current = stateRef.get() ?: return null
-        val redoStack = current.redoStack
-        if (redoStack.isEmpty()) return null
-        val step = redoStack.last()
+        val stack = current.redoStack
+        if (stack.isEmpty()) return null
+        val step = stack.last()
         if (step.type == EditType.ESRGAN_ENHANCE || step.type == EditType.INPAINTING) return null
-
-        stateRef.set(
-            current.copy(
-                history = current.history + step,
-                redoStack = redoStack.dropLast(1),
-            )
+        val next = current.copy(
+            history = current.history + step,
+            redoStack = stack.dropLast(1),
         )
-        return stateRef.get()
+        stateRef.set(next)
+        writeState()
+        Timber.d("redo: %d steps, %d in redo", next.history.size, next.redoStack.size)
+        return next
     }
 
     fun getStepCount(): Int = stateRef.get()?.history?.size ?: 0
@@ -111,15 +158,26 @@ class EditingStateManager @Inject constructor(
     fun canUndo(): Boolean = (stateRef.get()?.history?.size ?: 0) > 0
 
     fun canRedo(): Boolean {
-        val redoStack = stateRef.get()?.redoStack ?: return false
-        if (redoStack.isEmpty()) return false
-        val nextType = redoStack.last().type
+        val stack = stateRef.get()?.redoStack ?: return false
+        if (stack.isEmpty()) return false
+        val nextType = stack.last().type
         return nextType != EditType.ESRGAN_ENHANCE && nextType != EditType.INPAINTING
     }
+
+    // ── File paths ─────────────────────────────────────────────────────
+
+    fun imageFile(): File =
+        File(projectDir(), "image.jpg")
 
     private fun stateFile(id: Long): File =
         File(projectDir(id), "edit_state.json")
 
-    private fun projectDir(id: Long): File =
+    private fun snapshotsDir(): File =
+        File(projectDir(), "snapshots")
+
+    private fun snapshotFile(index: Int): File =
+        File(snapshotsDir(), "step_$index.jpg")
+
+    private fun projectDir(id: Long = projectId): File =
         File(context.filesDir, "projects/$id")
 }
