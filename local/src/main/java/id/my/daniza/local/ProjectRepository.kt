@@ -95,6 +95,12 @@ class ProjectRepository @Inject constructor(
         return File(context.filesDir, "projects/$projectId")
     }
 
+    fun regenerateThumbnail(projectId: Long) {
+        val imageFile = imageFile(projectId)
+        val thumbnailFile = File(projectDir(projectId), "thumbnail.jpg")
+        generateThumbnail(imageFile, thumbnailFile)
+    }
+
     // ── Thumbnail generation ────────────────────────────────────────────
 
     private fun generateThumbnail(sourceFile: File, destFile: File) {
@@ -104,12 +110,17 @@ class ProjectRepository @Inject constructor(
         val bitmap = BitmapFactory.decodeFile(sourceFile.absolutePath, options)
             ?: throw IllegalStateException("Failed to decode image for thumbnail")
 
-        val scaled = Bitmap.createScaledBitmap(bitmap, 300, 300, true)
+        val size = minOf(bitmap.width, bitmap.height)
+        val x = (bitmap.width - size) / 2
+        val y = (bitmap.height - size) / 2
+        val cropped = Bitmap.createBitmap(bitmap, x, y, size, size)
+        val scaled = Bitmap.createScaledBitmap(cropped, 300, 300, true)
         FileOutputStream(destFile).use { output ->
             scaled.compress(Bitmap.CompressFormat.JPEG, 80, output)
         }
         scaled.recycle()
-        if (scaled !== bitmap) bitmap.recycle()
+        cropped.recycle()
+        if (cropped !== bitmap) bitmap.recycle()
     }
 
     private fun calculateSampleSize(path: String, reqWidth: Int, reqHeight: Int): Int {

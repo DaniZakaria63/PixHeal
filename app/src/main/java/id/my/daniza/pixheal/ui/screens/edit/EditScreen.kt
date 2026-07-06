@@ -1,6 +1,6 @@
 package id.my.daniza.pixheal.ui.screens.edit
 
-import android.net.Uri
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,11 +23,14 @@ import androidx.compose.material.icons.filled.BackHand
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.LayersClear
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -48,15 +50,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
+import id.my.daniza.pixheal.data.editing.EditStep
+import id.my.daniza.pixheal.data.editing.EditType
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -77,7 +80,7 @@ fun EditScreen(
             CenterAlignedTopAppBar(
                 title = {
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(24.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         IconButton(
@@ -87,7 +90,7 @@ fun EditScreen(
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.Undo,
                                 contentDescription = "Undo",
-                                modifier = Modifier.size(24.dp),
+                                modifier = Modifier.size(22.dp),
                             )
                         }
                         IconButton(
@@ -97,8 +100,68 @@ fun EditScreen(
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.Redo,
                                 contentDescription = "Redo",
-                                modifier = Modifier.size(24.dp),
+                                modifier = Modifier.size(22.dp),
                             )
+                        }
+                        // ── History toggle ─────────────────────────
+                        Box {
+                            IconButton(onClick = { viewModel.toggleHistory() }) {
+                                Icon(
+                                    imageVector = Icons.Filled.ListAlt,
+                                    contentDescription = "Edit history",
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = uiState.showHistory,
+                                onDismissRequest = { viewModel.toggleHistory() },
+                            ) {
+                                if (uiState.editHistory.isEmpty()) {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                "No edits yet",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        },
+                                        onClick = { },
+                                        enabled = false,
+                                    )
+                                } else {
+                                    Text(
+                                        "${uiState.editHistory.size} edit(s)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                    )
+                                    HorizontalDivider()
+                                    uiState.editHistory
+                                        .asReversed()
+                                        .forEachIndexed { i, step ->
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                    ) {
+                                                        Text(
+                                                            "${i + 1}.",
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        )
+                                                        Text(
+                                                            step.displayName(),
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                        )
+                                                    }
+                                                },
+                                                onClick = { },
+                                                enabled = false,
+                                            )
+                                        }
+                                }
+                            }
                         }
                     }
                 },
@@ -113,7 +176,7 @@ fun EditScreen(
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
-                )
+                ),
             )
         },
         bottomBar = {
@@ -154,42 +217,49 @@ fun EditScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
-                .padding(16.dp),
+                .padding(top = paddingValues.calculateTopPadding())
+                .padding(bottom = paddingValues.calculateBottomPadding()),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // ── Zoomable + pannable image canvas ──────────────────────
+            // ── Image canvas ─────────────────────────────────────────
             var scale by remember { mutableFloatStateOf(1f) }
             var offset by remember { mutableStateOf(Offset.Zero) }
+            val imageUri = uiState.imageUri
 
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .clip(MaterialTheme.shapes.medium)
                     .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                     .pointerInput(Unit) {
                         detectTransformGestures { centroid, pan, zoom, _ ->
                             val oldScale = scale
                             val newScale = (oldScale * zoom).coerceIn(1f, 5f)
-
-                            // The image point under the previous finger position
-                            // should map to the current finger position after zoom
                             val previousCentroid = centroid - pan
-                            // imagePoint = (previousCentroid - oldOffset) / oldScale
                             val imagePoint = (previousCentroid - offset) / oldScale
-                            // target: imagePoint * newScale + newOffset = centroid
                             offset = centroid - imagePoint * newScale
-
                             scale = newScale
                         }
                     },
                 contentAlignment = Alignment.Center,
             ) {
-                val imageUri = uiState.imageUri
                 val resultBitmap = uiState.resultBitmap
 
-                if (imageUri != null) {
+                if (resultBitmap != null) {
+                    Image(
+                        bitmap = resultBitmap.asImageBitmap(),
+                        contentDescription = "Enhanced image",
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                                translationX = offset.x
+                                translationY = offset.y
+                            },
+                        contentScale = ContentScale.Fit,
+                    )
+                } else if (imageUri != null) {
                     AsyncImage(
                         model = imageUri,
                         contentDescription = "Image preview",
@@ -211,25 +281,29 @@ fun EditScreen(
                         CircularProgressIndicator(modifier = Modifier.size(32.dp))
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Loading project...",
+                            "Loading project…",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            Button(
+            // ── Enhance button ───────────────────────────────────────
+            FilledTonalButton(
                 onClick = { viewModel.enhance() },
-                modifier = Modifier.fillMaxWidth(),
                 enabled = !uiState.isProcessing && uiState.imageUri != null,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                )
+                modifier = Modifier
+                    .padding(horizontal = 12.dp),
             ) {
                 if (uiState.isProcessing) {
-                    Text("Processing...")
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Processing…")
                 } else {
                     Icon(
                         painter = painterResource(android.R.drawable.ic_menu_gallery),
@@ -249,16 +323,15 @@ fun EditScreen(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-
-            if (uiState.resultBitmap != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    "Enhancement complete",
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Medium,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
         }
     }
+}
+
+private fun EditStep.displayName(): String = when (type) {
+    EditType.ESRGAN_ENHANCE -> "Enhanced"
+    EditType.INPAINTING -> "Inpainted"
+    EditType.CROP -> "Cropped"
+    EditType.ROTATE -> "Rotated"
+    EditType.ADJUST_BRIGHTNESS -> "Brightness"
+    EditType.ADJUST_CONTRAST -> "Contrast"
 }
