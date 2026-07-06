@@ -31,7 +31,7 @@ private val json = Json { ignoreUnknownKeys = true }
  */
 @Singleton
 class EditingStateManager @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) {
     private val stateRef = AtomicReference<EditableState?>(null)
     private var projectId: Long = 0L
@@ -108,7 +108,7 @@ class EditingStateManager @Inject constructor(
                 redoStack = emptyList(),
             )
         }!!
-        // Clean up orphan snapshots (from overwritten redo branch)
+        writeState()
         val keepCount = next.history.size
         val snapshotsDir = snapshotsDir()
         if (snapshotsDir.exists()) {
@@ -132,6 +132,7 @@ class EditingStateManager @Inject constructor(
             redoStack = current.redoStack + last,
         )
         stateRef.set(next)
+        writeState()
         Timber.d("undo: %d steps remain, %d in redo", next.history.size, next.redoStack.size)
         return next
     }
@@ -147,6 +148,7 @@ class EditingStateManager @Inject constructor(
             redoStack = stack.dropLast(1),
         )
         stateRef.set(next)
+        writeState()
         Timber.d("redo: %d steps, %d in redo", next.history.size, next.redoStack.size)
         return next
     }
