@@ -56,6 +56,7 @@ dependencies {
     implementation(platform(libs.firebase.bom))
     implementation(libs.androidx.compose.ui.text.google.fonts)
     implementation(libs.firebase.crashlytics.ndk)
+    implementation(libs.firebase.config)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
