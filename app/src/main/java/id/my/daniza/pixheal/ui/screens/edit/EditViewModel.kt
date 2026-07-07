@@ -30,6 +30,7 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.FileOutputStream
 import javax.inject.Inject
+import androidx.core.net.toUri
 
 @HiltViewModel
 class EditViewModel @Inject constructor(
@@ -50,7 +51,7 @@ class EditViewModel @Inject constructor(
 
     private fun imageFileUri(): Uri {
         val file = editingStateManager.imageFile()
-        return Uri.parse("file://${file.absolutePath}?t=${System.currentTimeMillis()}")
+        return "file://${file.absolutePath}?t=${System.currentTimeMillis()}".toUri()
     }
 
     fun initProject(id: Long) {

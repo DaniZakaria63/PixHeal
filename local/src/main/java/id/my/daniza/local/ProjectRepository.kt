@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.core.net.toUri
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import java.io.File
@@ -19,18 +20,10 @@ class ProjectRepository @Inject constructor(
 
     fun getAllProjects(): Flow<List<ProjectEntity>> = projectDao.getAllProjects()
 
-    suspend fun getProjectById(id: Long): ProjectEntity? = projectDao.getProjectById(id)
-
-    suspend fun insertProject(entity: ProjectEntity): Long = projectDao.insertProject(entity)
-
-    suspend fun updateProject(project: ProjectEntity) = projectDao.updateProject(project)
-
     suspend fun deleteProject(id: Long) {
         projectDao.deleteProject(id)
         deleteProjectFiles(id)
     }
-
-    // ── Project initialization (files + thumbnail) ──────────────────────
 
     suspend fun createProject(
         name: String,
@@ -61,7 +54,7 @@ class ProjectRepository @Inject constructor(
             )
 
             projectDao.updateProject(
-                getProjectById(projectId)!!.copy(
+                projectDao.getProjectById(projectId)!!.copy(
                     thumbnailUri = File(projectDir(projectId), "thumbnail.jpg").absolutePath,
                 )
             )
@@ -74,16 +67,26 @@ class ProjectRepository @Inject constructor(
         }
     }
 
-    fun hasStateFile(projectId: Long): Boolean {
-        return stateFile(projectId).exists()
-    }
+    suspend fun checkProjectIntegrity(projectId: Long) : List<String>{
 
-    fun imageFile(projectId: Long): File {
-        return File(projectDir(projectId), "image.jpg")
-    }
+        val project = projectDao.getProjectById(projectId)
+        val reasons = mutableListOf<String>()
 
-    fun stateFile(projectId: Long): File {
-        return File(projectDir(projectId), "edit_state.json")
+        if (project == null) {
+            reasons.add("Project record not found")
+        }else{
+            val sourceUri = try {
+                project.sourceImageUri.toUri()
+            } catch (_: Exception) { null }
+            if (sourceUri == null) reasons.add("Source image URI is malformed")
+        }
+
+        val hasStaleFile = File(projectDir(projectId), "edit_state.json").exists()
+        if (!hasStaleFile) {
+            reasons.add("Editing state file is missing")
+        }
+
+        return reasons
     }
 
     fun deleteProjectFiles(projectId: Long) {
@@ -96,12 +99,10 @@ class ProjectRepository @Inject constructor(
     }
 
     fun regenerateThumbnail(projectId: Long) {
-        val imageFile = imageFile(projectId)
+        val imageFile = File(projectDir(projectId), "image.jpg")
         val thumbnailFile = File(projectDir(projectId), "thumbnail.jpg")
         generateThumbnail(imageFile, thumbnailFile)
     }
-
-    // ── Thumbnail generation ────────────────────────────────────────────
 
     private fun generateThumbnail(sourceFile: File, destFile: File) {
         val options = BitmapFactory.Options().apply {
