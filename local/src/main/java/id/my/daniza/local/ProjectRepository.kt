@@ -11,6 +11,7 @@ import java.io.File
 import java.io.FileOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
+import androidx.core.graphics.scale
 
 @Singleton
 class ProjectRepository @Inject constructor(
@@ -89,6 +90,25 @@ class ProjectRepository @Inject constructor(
         return reasons
     }
 
+    suspend fun updateProject(projectId: Long, status: String, stepCount: Int): List<String> {
+        val project = projectDao.getProjectById(projectId)
+        val reason = mutableListOf<String>()
+
+        if(project == null){
+            reason.add("Project record not found")
+        }else{
+            projectDao.updateProject(
+                project.copy(
+                    status = status,
+                    stepCount = stepCount,
+                    lastEditedAt = System.currentTimeMillis()
+                )
+            )
+            regenerateThumbnail(projectId)
+        }
+        return reason
+    }
+
     fun deleteProjectFiles(projectId: Long) {
         val dir = projectDir(projectId)
         if (dir.exists()) dir.deleteRecursively()
@@ -115,7 +135,7 @@ class ProjectRepository @Inject constructor(
         val x = (bitmap.width - size) / 2
         val y = (bitmap.height - size) / 2
         val cropped = Bitmap.createBitmap(bitmap, x, y, size, size)
-        val scaled = Bitmap.createScaledBitmap(cropped, 300, 300, true)
+        val scaled = cropped.scale(300, 300)
         FileOutputStream(destFile).use { output ->
             scaled.compress(Bitmap.CompressFormat.JPEG, 80, output)
         }

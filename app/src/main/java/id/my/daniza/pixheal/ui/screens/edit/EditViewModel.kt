@@ -1,6 +1,7 @@
 package id.my.daniza.pixheal.ui.screens.edit
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.net.Uri
@@ -31,6 +32,7 @@ import timber.log.Timber
 import java.io.FileOutputStream
 import javax.inject.Inject
 import androidx.core.net.toUri
+import androidx.core.graphics.createBitmap
 
 @HiltViewModel
 class EditViewModel @Inject constructor(
@@ -58,7 +60,6 @@ class EditViewModel @Inject constructor(
         projectId = id
         val state = editingStateManager.openProject(id)
         viewModelScope.launch {
-            val imageFile = editingStateManager.imageFile()
             _uiState.update {
                 it.copy(
                     imageUri = imageFileUri(),
@@ -126,9 +127,9 @@ class EditViewModel @Inject constructor(
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 val imageFile = editingStateManager.imageFile()
-                val original = android.graphics.BitmapFactory.decodeFile(imageFile.absolutePath)
+                val original = BitmapFactory.decodeFile(imageFile.absolutePath)
                 if (original != null) {
-                    val mask = Bitmap.createBitmap(original.width, original.height, Bitmap.Config.ARGB_8888)
+                    val mask = createBitmap(original.width, original.height)
                     mask.eraseColor(android.graphics.Color.TRANSPARENT)
                     original.recycle()
                     _uiState.update { it.copy(maskBitmap = mask) }
@@ -210,23 +211,19 @@ class EditViewModel @Inject constructor(
                         result.bitmap.recycle()
                     }
 
-                    val step = EditStep(
-                        id = System.currentTimeMillis(),
-                        type = EditType.INPAINTING,
-                    )
-                    val next = editingStateManager.pushStep(step)
-
-                    val project = projectRepository.getProjectById(projectId)
-                    if (project != null) {
-                        projectRepository.updateProject(
-                            project.copy(
-                                stepCount = next.history.size,
-                                status = "edited",
-                                lastEditedAt = System.currentTimeMillis(),
-                            )
+                    val next = editingStateManager.pushStep(
+                        EditStep(
+                            id = System.currentTimeMillis(),
+                            type = EditType.INPAINTING,
                         )
-                        projectRepository.regenerateThumbnail(projectId)
-                    }
+                    )
+
+                    projectRepository.updateProject(
+                        projectId = projectId,
+                        stepCount = next.history.size,
+                        status = "edited",
+                    )
+                    projectRepository.regenerateThumbnail(projectId)
 
                     clearMaskWithoutTrigger()
                     refreshUndoRedo()
@@ -285,23 +282,18 @@ class EditViewModel @Inject constructor(
                         }
                     }
 
-                    val step = EditStep(
-                        id = System.currentTimeMillis(),
-                        type = EditType.ESRGAN_ENHANCE,
-                    )
-                    val next = editingStateManager.pushStep(step)
-
-                    val project = projectRepository.getProjectById(projectId)
-                    if (project != null) {
-                        projectRepository.updateProject(
-                            project.copy(
-                                stepCount = next.history.size,
-                                status = "edited",
-                                lastEditedAt = System.currentTimeMillis(),
-                            )
+                    val next = editingStateManager.pushStep(
+                        EditStep(
+                            id = System.currentTimeMillis(),
+                            type = EditType.ESRGAN_ENHANCE,
                         )
-                        projectRepository.regenerateThumbnail(projectId)
-                    }
+                    )
+
+                    projectRepository.updateProject(
+                        projectId = projectId,
+                        stepCount = next.history.size,
+                        status = "edited",
+                    )
 
                     refreshUndoRedo()
                     _uiState.update {
@@ -322,6 +314,14 @@ class EditViewModel @Inject constructor(
         editingStateManager.restoreSnapshot(state.history.size)
 
         refreshUndoRedo()
+        viewModelScope.launch(Dispatchers.IO) {
+            projectRepository.updateProject(
+                projectId = projectId,
+                status = "undo",
+                stepCount = state.history.size
+            )
+        }
+
         val imageFile = editingStateManager.imageFile()
         _uiState.update {
             it.copy(
@@ -331,13 +331,6 @@ class EditViewModel @Inject constructor(
             )
         }
 
-        viewModelScope.launch(Dispatchers.IO) {
-            val project = projectRepository.getProjectById(projectId)
-            if (project != null) {
-                projectRepository.updateProject(project.copy(stepCount = state.history.size))
-                projectRepository.regenerateThumbnail(projectId)
-            }
-        }
     }
 
     fun redo() {
@@ -347,10 +340,11 @@ class EditViewModel @Inject constructor(
         _uiState.update { it.copy(editHistory = state.history) }
 
         viewModelScope.launch(Dispatchers.IO) {
-            val project = projectRepository.getProjectById(projectId)
-            if (project != null) {
-                projectRepository.updateProject(project.copy(stepCount = state.history.size))
-            }
+            projectRepository.updateProject(
+                projectId = projectId,
+                stepCount = state.history.size,
+                status = "redo"
+            )
         }
     }
 

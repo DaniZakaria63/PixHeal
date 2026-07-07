@@ -1,0 +1,10 @@
+package id.my.daniza.local.data
+
+object FileNameObj {
+    const val Project = ""
+    const val ProjectFolder = "projects"
+    const val Image = "image.jpg"
+    const val Thumbnail = "thumbnail.jpg"
+    const val EditState = "edit_state.json"
+    const val SnapshotDir = "snapshot"
+}
