@@ -8,6 +8,7 @@ import android.graphics.Canvas
 import android.net.Uri
 import dagger.hilt.android.qualifiers.ApplicationContext
 import id.my.daniza.litert.LitertBridge
+import id.my.daniza.local.data.FileNameObj
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -73,13 +74,10 @@ class EditEffectManager @Inject constructor(
         EffectResult.Success(final)
     }
 
-    fun isAotganModelDownloaded(): Boolean {
-        return aotganModelFile().exists()
-    }
-
-    fun aotganModelFile(): File {
-        val dir = File(context.filesDir, "models")
-        return File(dir, "aotgan.tflite")
+    fun isAotganModelDownloaded(): Pair<Boolean, File> {
+        val dir = File(context.filesDir, FileNameObj.ModelFolder)
+        val model = File(dir, FileNameObj.ModelAOTGAN)
+        return Pair(model.exists() && model.length() > 0, model)
     }
 
     private suspend fun ensureModelLoaded(target: LoadedModel): String? {
@@ -90,8 +88,8 @@ class EditEffectManager @Inject constructor(
                 when (target) {
                     LoadedModel.ESRGAN -> litertBridge.loadModel("esrgan/real_esrgan_x4plus.tflite")
                     LoadedModel.AOTGAN -> {
-                        val file = aotganModelFile()
-                        if (!file.exists()) return "AOT-GAN model file not found"
+                        val (isValid, file) = isAotganModelDownloaded()
+                        if (isValid) return "AOT-GAN model file not found"
                         litertBridge.loadModelFromFile(file)
                     }
                     LoadedModel.NONE -> return null

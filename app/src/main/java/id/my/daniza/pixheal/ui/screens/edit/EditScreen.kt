@@ -437,7 +437,7 @@ private fun ColumnScope.ObjRemovalContent(viewModel: EditViewModel, uiState: Edi
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                FilledTonalButton(onClick = { viewModel.downloadAotganModel() }) {
+                FilledTonalButton(onClick = { viewModel.triggerModelDownload() }) {
                     Text("Download Model")
                 }
             }
@@ -559,7 +559,7 @@ private fun ColumnScope.ObjRemovalContent(viewModel: EditViewModel, uiState: Edi
         Spacer(modifier = Modifier.height(8.dp))
 
         FilledTonalButton(
-            onClick = { viewModel.triggerObjectRemoval() },
+            onClick = { viewModel.triggerInpainting() },
             enabled = uiState.maskBitmap != null && !uiState.isProcessing,
             modifier = Modifier.padding(horizontal = 12.dp),
         ) {

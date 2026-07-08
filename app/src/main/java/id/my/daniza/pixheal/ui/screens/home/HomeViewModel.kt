@@ -15,11 +15,6 @@ import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import androidx.core.net.toUri
 
-sealed class IntegrityResult {
-    data class Valid(val projectId: Long) : IntegrityResult()
-    data class Corrupt(val projectId: Long, val reasons: List<String>) : IntegrityResult()
-}
-
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val projectRepository: ProjectRepository,
@@ -48,4 +43,9 @@ class HomeViewModel @Inject constructor(
             projectRepository.deleteProject(projectId)
         }
     }
+}
+
+sealed class IntegrityResult {
+    data class Valid(val projectId: Long) : IntegrityResult()
+    data class Corrupt(val projectId: Long, val reasons: List<String>) : IntegrityResult()
 }

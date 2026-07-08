@@ -12,19 +12,17 @@ import java.io.FileOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 import androidx.core.graphics.scale
+import id.my.daniza.local.data.FileNameObj
 
 @Singleton
 class ProjectRepository @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val projectDao: ProjectDao,
+    private val projectHandler: ProjectHandler,
 ) {
 
     fun getAllProjects(): Flow<List<ProjectEntity>> = projectDao.getAllProjects()
 
-    suspend fun deleteProject(id: Long) {
-        projectDao.deleteProject(id)
-        deleteProjectFiles(id)
-    }
 
     suspend fun createProject(
         name: String,
@@ -39,31 +37,30 @@ class ProjectRepository @Inject constructor(
         )
 
         try {
-            val dir = projectDir(projectId)
-            dir.mkdirs()
+            projectHandler.projectDir().also { it.mkdirs() }
 
-            val imageFile = File(dir, "image.jpg")
+            val imageFile = projectHandler.imageFile()
             context.contentResolver.openInputStream(sourceUri)?.use { input ->
                 FileOutputStream(imageFile).use { output -> input.copyTo(output) }
             } ?: throw IllegalStateException("Failed to open source image")
 
-            val thumbnailFile = File(dir, "thumbnail.jpg")
+            val thumbnailFile = projectHandler.thumbnailFile()
             generateThumbnail(imageFile, thumbnailFile)
 
-            File(dir, "edit_state.json").writeText(
+            projectHandler.editStateFile().writeText(
                 """{"projectId":$projectId,"history":[],"redoStack":[]}"""
             )
 
             projectDao.updateProject(
                 projectDao.getProjectById(projectId)!!.copy(
-                    thumbnailUri = File(projectDir(projectId), "thumbnail.jpg").absolutePath,
+                    thumbnailUri = thumbnailFile.absolutePath,
                 )
             )
 
             return projectId
         } catch (e: Exception) {
             projectDao.deleteProject(projectId)
-            deleteProjectFiles(projectId)
+            deleteProject(projectId)
             throw e
         }
     }
@@ -82,7 +79,7 @@ class ProjectRepository @Inject constructor(
             if (sourceUri == null) reasons.add("Source image URI is malformed")
         }
 
-        val hasStaleFile = File(projectDir(projectId), "edit_state.json").exists()
+        val hasStaleFile = projectHandler.editStateFile().exists()
         if (!hasStaleFile) {
             reasons.add("Editing state file is missing")
         }
@@ -90,8 +87,8 @@ class ProjectRepository @Inject constructor(
         return reasons
     }
 
-    suspend fun updateProject(projectId: Long, status: String, stepCount: Int): List<String> {
-        val project = projectDao.getProjectById(projectId)
+    suspend fun updateProject(status: String, stepCount: Int): List<String> {
+        val project = projectDao.getProjectById(projectHandler.currentProjectId)
         val reason = mutableListOf<String>()
 
         if(project == null){
@@ -104,24 +101,22 @@ class ProjectRepository @Inject constructor(
                     lastEditedAt = System.currentTimeMillis()
                 )
             )
-            regenerateThumbnail(projectId)
+            regenerateThumbnail()
         }
         return reason
     }
 
-    fun deleteProjectFiles(projectId: Long) {
-        val dir = projectDir(projectId)
+    suspend fun deleteProject(id: Long) {
+        projectDao.deleteProject(id)
+        val dir = File(context.filesDir, "${FileNameObj.ProjectFolder}/$id")
         if (dir.exists()) dir.deleteRecursively()
     }
 
-    private fun projectDir(projectId: Long): File {
-        return File(context.filesDir, "projects/$projectId")
-    }
-
-    fun regenerateThumbnail(projectId: Long) {
-        val imageFile = File(projectDir(projectId), "image.jpg")
-        val thumbnailFile = File(projectDir(projectId), "thumbnail.jpg")
-        generateThumbnail(imageFile, thumbnailFile)
+    fun regenerateThumbnail() {
+        generateThumbnail(
+            sourceFile = projectHandler.imageFile(),
+            destFile = projectHandler.thumbnailFile()
+        )
     }
 
     private fun generateThumbnail(sourceFile: File, destFile: File) {
