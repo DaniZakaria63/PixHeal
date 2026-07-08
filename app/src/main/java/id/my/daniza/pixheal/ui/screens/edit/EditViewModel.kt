@@ -1,12 +1,14 @@
 package id.my.daniza.pixheal.ui.screens.edit
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import id.my.daniza.local.ProjectHandler
 import id.my.daniza.local.ProjectRepository
 import id.my.daniza.modelpull.DownloadState
 import id.my.daniza.modelpull.ModelDownloadRepository
@@ -15,7 +17,6 @@ import id.my.daniza.pixheal.data.editing.EditStep
 import id.my.daniza.pixheal.data.editing.EditType
 import id.my.daniza.pixheal.data.editing.EditingStateManager
 import id.my.daniza.pixheal.data.editing.EffectResult
-import id.my.daniza.pixheal.data.remoteconfig.RemoteConfigManager
 import id.my.daniza.pixheal.data.ui.EditTool
 import id.my.daniza.pixheal.data.ui.EditUiState
 import kotlinx.coroutines.Dispatchers
@@ -23,21 +24,26 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import timber.log.Timber
 import java.io.FileOutputStream
 import javax.inject.Inject
+import androidx.core.net.toUri
+import androidx.core.graphics.createBitmap
 
 @HiltViewModel
 class EditViewModel @Inject constructor(
+    private val projectHandler: ProjectHandler,
     private val editingStateManager: EditingStateManager,
     private val projectRepository: ProjectRepository,
     private val editEffectManager: EditEffectManager,
     private val modelDownloadRepository: ModelDownloadRepository,
-    private val remoteConfigManager: RemoteConfigManager,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(EditUiState())
@@ -46,18 +52,25 @@ class EditViewModel @Inject constructor(
     val downloadState: StateFlow<DownloadState> = modelDownloadRepository.downloadState
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(), DownloadState())
 
-    private var projectId: Long = 0
-
-    private fun imageFileUri(): Uri {
-        val file = editingStateManager.imageFile()
-        return Uri.parse("file://${file.absolutePath}?t=${System.currentTimeMillis()}")
+    init {
+        _uiState
+            .map { it.editHistory }
+            .distinctUntilChanged()
+            .onEach {
+                _uiState.update { state ->
+                    state.copy(
+                        canUndo = editingStateManager.canUndo(),
+                        canRedo = editingStateManager.canRedo(),
+                    )
+                }
+            }
+            .launchIn(viewModelScope)
     }
 
     fun initProject(id: Long) {
-        projectId = id
-        val state = editingStateManager.openProject(id)
         viewModelScope.launch {
-            val imageFile = editingStateManager.imageFile()
+            projectHandler.openProject(id)
+            val state = editingStateManager.openProject()
             _uiState.update {
                 it.copy(
                     imageUri = imageFileUri(),
@@ -65,7 +78,6 @@ class EditViewModel @Inject constructor(
                 )
             }
         }
-        refreshUndoRedo()
     }
 
     fun selectTool(tool: EditTool) {
@@ -78,40 +90,24 @@ class EditViewModel @Inject constructor(
     private fun checkModelAvailability() {
         viewModelScope.launch {
             _uiState.update { it.copy(isCheckingModel = true) }
-            val available = editEffectManager.isAotganModelDownloaded()
-            if (!available) {
-                _uiState.update {
-                    it.copy(
-                        isCheckingModel = false,
-                        modelAvailable = false,
-                        showDrawGuide = true,
-                    )
-                }
-                triggerModelDownload()
-            } else {
-                val file = editEffectManager.aotganModelFile()
-                val valid = withContext(Dispatchers.IO) { file.exists() && file.length() > 0 }
-                _uiState.update {
-                    it.copy(
-                        isCheckingModel = false,
-                        modelAvailable = valid,
-                        showDrawGuide = valid,
-                    )
-                }
-                if (valid) initMaskBitmap()
+            val (available) = editEffectManager.isAotganModelDownloaded()
+
+            _uiState.update {
+                it.copy(
+                    isCheckingModel = false,
+                    modelAvailable = available,
+                    showDrawGuide = !available,
+                )
             }
+
+            if (available) initMaskBitmap() else triggerModelDownload()
         }
     }
 
-    fun dismissDownloadDialog() {
-        _uiState.update { it.copy(showDownloadDialog = false) }
-    }
-
-    private fun triggerModelDownload() {
+    fun triggerModelDownload() {
         _uiState.update { it.copy(showDownloadDialog = true) }
-        val url = remoteConfigManager.getAotganModelUrl()
         viewModelScope.launch {
-            val result = modelDownloadRepository.downloadAotganModel(url)
+            val result = modelDownloadRepository.downloadAotganModel()
             if (result != null) {
                 _uiState.update {
                     it.copy(modelAvailable = true, showDrawGuide = true)
@@ -124,16 +120,19 @@ class EditViewModel @Inject constructor(
     private fun initMaskBitmap() {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
-                val imageFile = editingStateManager.imageFile()
-                val original = android.graphics.BitmapFactory.decodeFile(imageFile.absolutePath)
+                val original = BitmapFactory.decodeFile(projectHandler.imageFile().absolutePath)
                 if (original != null) {
-                    val mask = Bitmap.createBitmap(original.width, original.height, Bitmap.Config.ARGB_8888)
+                    val mask = createBitmap(original.width, original.height)
                     mask.eraseColor(android.graphics.Color.TRANSPARENT)
                     original.recycle()
                     _uiState.update { it.copy(maskBitmap = mask) }
                 }
             }
         }
+    }
+
+    fun dismissDownloadDialog() {
+        _uiState.update { it.copy(showDownloadDialog = false) }
     }
 
     fun dismissDrawGuide() {
@@ -166,10 +165,6 @@ class EditViewModel @Inject constructor(
         _uiState.update { it.copy(maskBitmap = mask) }
     }
 
-    fun triggerObjectRemoval() {
-        triggerInpainting()
-    }
-
     private fun drawBrushOnMask(mask: Bitmap, x: Float, y: Float, radius: Float) {
         val canvas = Canvas(mask)
         val paint = Paint().apply {
@@ -180,7 +175,7 @@ class EditViewModel @Inject constructor(
         canvas.drawCircle(x, y, radius, paint)
     }
 
-    private fun triggerInpainting() {
+    fun triggerInpainting() {
         val mask = _uiState.value.maskBitmap ?: return
         val imageUri = _uiState.value.imageUri ?: return
 
@@ -201,34 +196,27 @@ class EditViewModel @Inject constructor(
                     return@launch
                 }
                 is EffectResult.Success -> {
-                    val imageFile = editingStateManager.imageFile()
                     withContext(Dispatchers.IO) {
-                        FileOutputStream(imageFile).use { out ->
+                        FileOutputStream(projectHandler.imageFile()).use { out ->
                             result.bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
                         }
                         result.bitmap.recycle()
                     }
 
-                    val step = EditStep(
-                        id = System.currentTimeMillis(),
-                        type = EditType.INPAINTING,
-                    )
-                    val next = editingStateManager.pushStep(step)
-
-                    val project = projectRepository.getProjectById(projectId)
-                    if (project != null) {
-                        projectRepository.updateProject(
-                            project.copy(
-                                stepCount = next.history.size,
-                                status = "edited",
-                                lastEditedAt = System.currentTimeMillis(),
-                            )
+                    val next = editingStateManager.pushStep(
+                        EditStep(
+                            id = System.currentTimeMillis(),
+                            type = EditType.INPAINTING,
                         )
-                        projectRepository.regenerateThumbnail(projectId)
-                    }
+                    )
+
+                    projectRepository.updateProject(
+                        stepCount = next.history.size,
+                        status = "edited",
+                    )
+                    projectRepository.regenerateThumbnail()
 
                     clearMaskWithoutTrigger()
-                    refreshUndoRedo()
                     _uiState.update {
                         it.copy(
                             isProcessing = false,
@@ -277,32 +265,24 @@ class EditViewModel @Inject constructor(
                     return@launch
                 }
                 is EffectResult.Success -> {
-                    val imageFile = editingStateManager.imageFile()
                     withContext(Dispatchers.IO) {
-                        FileOutputStream(imageFile).use { out ->
+                        FileOutputStream(projectHandler.imageFile()).use { out ->
                             result.bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
                         }
                     }
 
-                    val step = EditStep(
-                        id = System.currentTimeMillis(),
-                        type = EditType.ESRGAN_ENHANCE,
-                    )
-                    val next = editingStateManager.pushStep(step)
-
-                    val project = projectRepository.getProjectById(projectId)
-                    if (project != null) {
-                        projectRepository.updateProject(
-                            project.copy(
-                                stepCount = next.history.size,
-                                status = "edited",
-                                lastEditedAt = System.currentTimeMillis(),
-                            )
+                    val next = editingStateManager.pushStep(
+                        EditStep(
+                            id = System.currentTimeMillis(),
+                            type = EditType.ESRGAN_ENHANCE,
                         )
-                        projectRepository.regenerateThumbnail(projectId)
-                    }
+                    )
 
-                    refreshUndoRedo()
+                    projectRepository.updateProject(
+                        stepCount = next.history.size,
+                        status = "edited",
+                    )
+
                     _uiState.update {
                         it.copy(
                             isProcessing = false,
@@ -320,37 +300,39 @@ class EditViewModel @Inject constructor(
         val state = editingStateManager.undo() ?: return
         editingStateManager.restoreSnapshot(state.history.size)
 
-        refreshUndoRedo()
-        val imageFile = editingStateManager.imageFile()
+        viewModelScope.launch(Dispatchers.IO) {
+            projectRepository.updateProject(
+                status = "undo",
+                stepCount = state.history.size
+            )
+        }
+
         _uiState.update {
             it.copy(
-                imageUri = Uri.fromFile(imageFile),
+                imageUri = Uri.fromFile(projectHandler.imageFile()),
                 resultBitmap = null,
                 editHistory = state.history,
             )
         }
 
-        viewModelScope.launch(Dispatchers.IO) {
-            val project = projectRepository.getProjectById(projectId)
-            if (project != null) {
-                projectRepository.updateProject(project.copy(stepCount = state.history.size))
-                projectRepository.regenerateThumbnail(projectId)
-            }
-        }
     }
 
     fun redo() {
         val state = editingStateManager.redo() ?: return
 
-        refreshUndoRedo()
         _uiState.update { it.copy(editHistory = state.history) }
 
         viewModelScope.launch(Dispatchers.IO) {
-            val project = projectRepository.getProjectById(projectId)
-            if (project != null) {
-                projectRepository.updateProject(project.copy(stepCount = state.history.size))
-            }
+            projectRepository.updateProject(
+                stepCount = state.history.size,
+                status = "redo"
+            )
         }
+    }
+
+    private fun imageFileUri(): Uri {
+        val file = projectHandler.imageFile()
+        return "file://${file.absolutePath}?t=${System.currentTimeMillis()}".toUri()
     }
 
     fun toggleHistory() {
@@ -365,25 +347,13 @@ class EditViewModel @Inject constructor(
         }
     }
 
-    fun downloadAotganModel() {
-        triggerModelDownload()
-    }
-
     fun cancelDownload() {
         modelDownloadRepository.cancelDownload()
-    }
-
-    private fun refreshUndoRedo() {
-        _uiState.update {
-            it.copy(
-                canUndo = editingStateManager.canUndo(),
-                canRedo = editingStateManager.canRedo(),
-            )
-        }
     }
 
     override fun onCleared() {
         super.onCleared()
         editingStateManager.closeProject()
+        projectHandler.closeProject()
     }
 }

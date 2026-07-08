@@ -15,11 +15,6 @@ import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import androidx.core.net.toUri
 
-sealed class IntegrityResult {
-    data class Valid(val projectId: Long) : IntegrityResult()
-    data class Corrupt(val projectId: Long, val reasons: List<String>) : IntegrityResult()
-}
-
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val projectRepository: ProjectRepository,
@@ -29,33 +24,16 @@ class HomeViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     suspend fun createNewProject(uri: Uri): Long = withContext(Dispatchers.IO) {
-        val name = "Project_${System.currentTimeMillis()}"
+        val name = "Edit_${System.currentTimeMillis()}"
         projectRepository.createProject(name = name, sourceUri = uri)
     }
 
     fun openProject(projectId: Long, onResult: (IntegrityResult) -> Unit) {
         viewModelScope.launch {
-            val project = projectRepository.getProjectById(projectId)
-            val reasons = mutableListOf<String>()
-
-            if (project == null) {
-                reasons.add("Project record not found")
-            }
-
-            if (project != null) {
-                val sourceUri = try {
-                    project.sourceImageUri.toUri()
-                } catch (_: Exception) { null }
-                if (sourceUri == null) reasons.add("Source image URI is malformed")
-            }
-
-            if (!projectRepository.hasStateFile(projectId)) {
-                reasons.add("Editing state file is missing")
-            }
-
+            val staleReason = projectRepository.checkProjectIntegrity(projectId)
             onResult(
-                if (reasons.isEmpty()) IntegrityResult.Valid(projectId)
-                else IntegrityResult.Corrupt(projectId, reasons)
+                if (staleReason.isEmpty()) IntegrityResult.Valid(projectId)
+                else IntegrityResult.Corrupt(projectId, staleReason)
             )
         }
     }
@@ -65,4 +43,9 @@ class HomeViewModel @Inject constructor(
             projectRepository.deleteProject(projectId)
         }
     }
+}
+
+sealed class IntegrityResult {
+    data class Valid(val projectId: Long) : IntegrityResult()
+    data class Corrupt(val projectId: Long, val reasons: List<String>) : IntegrityResult()
 }

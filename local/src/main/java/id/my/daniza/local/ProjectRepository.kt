@@ -4,33 +4,25 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.core.net.toUri
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import java.io.File
 import java.io.FileOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
+import androidx.core.graphics.scale
+import id.my.daniza.local.data.FileNameObj
 
 @Singleton
 class ProjectRepository @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val projectDao: ProjectDao,
+    private val projectHandler: ProjectHandler,
 ) {
 
     fun getAllProjects(): Flow<List<ProjectEntity>> = projectDao.getAllProjects()
 
-    suspend fun getProjectById(id: Long): ProjectEntity? = projectDao.getProjectById(id)
-
-    suspend fun insertProject(entity: ProjectEntity): Long = projectDao.insertProject(entity)
-
-    suspend fun updateProject(project: ProjectEntity) = projectDao.updateProject(project)
-
-    suspend fun deleteProject(id: Long) {
-        projectDao.deleteProject(id)
-        deleteProjectFiles(id)
-    }
-
-    // ── Project initialization (files + thumbnail) ──────────────────────
 
     suspend fun createProject(
         name: String,
@@ -45,63 +37,87 @@ class ProjectRepository @Inject constructor(
         )
 
         try {
-            val dir = projectDir(projectId)
-            dir.mkdirs()
+            projectHandler.projectDir().also { it.mkdirs() }
 
-            val imageFile = File(dir, "image.jpg")
+            val imageFile = projectHandler.imageFile()
             context.contentResolver.openInputStream(sourceUri)?.use { input ->
                 FileOutputStream(imageFile).use { output -> input.copyTo(output) }
             } ?: throw IllegalStateException("Failed to open source image")
 
-            val thumbnailFile = File(dir, "thumbnail.jpg")
+            val thumbnailFile = projectHandler.thumbnailFile()
             generateThumbnail(imageFile, thumbnailFile)
 
-            File(dir, "edit_state.json").writeText(
+            projectHandler.editStateFile().writeText(
                 """{"projectId":$projectId,"history":[],"redoStack":[]}"""
             )
 
             projectDao.updateProject(
-                getProjectById(projectId)!!.copy(
-                    thumbnailUri = File(projectDir(projectId), "thumbnail.jpg").absolutePath,
+                projectDao.getProjectById(projectId)!!.copy(
+                    thumbnailUri = thumbnailFile.absolutePath,
                 )
             )
 
             return projectId
         } catch (e: Exception) {
             projectDao.deleteProject(projectId)
-            deleteProjectFiles(projectId)
+            deleteProject(projectId)
             throw e
         }
     }
 
-    fun hasStateFile(projectId: Long): Boolean {
-        return stateFile(projectId).exists()
+    suspend fun checkProjectIntegrity(projectId: Long) : List<String>{
+
+        val project = projectDao.getProjectById(projectId)
+        val reasons = mutableListOf<String>()
+
+        if (project == null) {
+            reasons.add("Project record not found")
+        }else{
+            val sourceUri = try {
+                project.sourceImageUri.toUri()
+            } catch (_: Exception) { null }
+            if (sourceUri == null) reasons.add("Source image URI is malformed")
+        }
+
+        val hasStaleFile = projectHandler.editStateFile().exists()
+        if (!hasStaleFile) {
+            reasons.add("Editing state file is missing")
+        }
+
+        return reasons
     }
 
-    fun imageFile(projectId: Long): File {
-        return File(projectDir(projectId), "image.jpg")
+    suspend fun updateProject(status: String, stepCount: Int): List<String> {
+        val project = projectDao.getProjectById(projectHandler.currentProjectId)
+        val reason = mutableListOf<String>()
+
+        if(project == null){
+            reason.add("Project record not found")
+        }else{
+            projectDao.updateProject(
+                project.copy(
+                    status = status,
+                    stepCount = stepCount,
+                    lastEditedAt = System.currentTimeMillis()
+                )
+            )
+            regenerateThumbnail()
+        }
+        return reason
     }
 
-    fun stateFile(projectId: Long): File {
-        return File(projectDir(projectId), "edit_state.json")
-    }
-
-    fun deleteProjectFiles(projectId: Long) {
-        val dir = projectDir(projectId)
+    suspend fun deleteProject(id: Long) {
+        projectDao.deleteProject(id)
+        val dir = File(context.filesDir, "${FileNameObj.ProjectFolder}/$id")
         if (dir.exists()) dir.deleteRecursively()
     }
 
-    private fun projectDir(projectId: Long): File {
-        return File(context.filesDir, "projects/$projectId")
+    fun regenerateThumbnail() {
+        generateThumbnail(
+            sourceFile = projectHandler.imageFile(),
+            destFile = projectHandler.thumbnailFile()
+        )
     }
-
-    fun regenerateThumbnail(projectId: Long) {
-        val imageFile = imageFile(projectId)
-        val thumbnailFile = File(projectDir(projectId), "thumbnail.jpg")
-        generateThumbnail(imageFile, thumbnailFile)
-    }
-
-    // ── Thumbnail generation ────────────────────────────────────────────
 
     private fun generateThumbnail(sourceFile: File, destFile: File) {
         val options = BitmapFactory.Options().apply {
@@ -114,7 +130,7 @@ class ProjectRepository @Inject constructor(
         val x = (bitmap.width - size) / 2
         val y = (bitmap.height - size) / 2
         val cropped = Bitmap.createBitmap(bitmap, x, y, size, size)
-        val scaled = Bitmap.createScaledBitmap(cropped, 300, 300, true)
+        val scaled = cropped.scale(300, 300)
         FileOutputStream(destFile).use { output ->
             scaled.compress(Bitmap.CompressFormat.JPEG, 80, output)
         }

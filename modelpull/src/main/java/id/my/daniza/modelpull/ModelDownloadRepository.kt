@@ -1,5 +1,6 @@
 package id.my.daniza.modelpull
 
+import id.my.daniza.modelpull.remoteconfig.RemoteConfigManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,6 +18,7 @@ import javax.inject.Singleton
 class ModelDownloadRepository @Inject constructor(
     private val client: OkHttpClient,
     private val modelDirectory: File,
+    private val remoteConfigManager: RemoteConfigManager,
 ) {
 
     private val _downloadState = MutableStateFlow(DownloadState())
@@ -25,7 +27,7 @@ class ModelDownloadRepository @Inject constructor(
     @Volatile
     private var isCancelled = false
 
-    suspend fun downloadAotganModel(modelUrl: String): File? {
+    suspend fun downloadAotganModel(): File? {
         isCancelled = false
         val targetFile = File(modelDirectory, "aotgan.tflite")
         val metadataFile = File(modelDirectory, "aotgan_metadata.json")
@@ -42,6 +44,7 @@ class ModelDownloadRepository @Inject constructor(
         _downloadState.value = DownloadState(isDownloading = true, progress = 0f)
 
         val zipTempFile = File(modelDirectory, "aotgan_zip.tmp")
+        val modelUrl = remoteConfigManager.getAotganModelUrl()
 
         return try {
             withContext(Dispatchers.IO) {

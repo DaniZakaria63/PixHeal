@@ -1,4 +1,4 @@
-package id.my.daniza.pixheal.data.remoteconfig
+package id.my.daniza.modelpull.remoteconfig
 
 import com.google.firebase.remoteconfig.FirebaseRemoteConfig
 import com.google.firebase.remoteconfig.FirebaseRemoteConfigSettings

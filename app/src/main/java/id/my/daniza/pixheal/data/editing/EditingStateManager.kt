@@ -1,7 +1,6 @@
 package id.my.daniza.pixheal.data.editing
 
-import android.content.Context
-import dagger.hilt.android.qualifiers.ApplicationContext
+import id.my.daniza.local.ProjectHandler
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import timber.log.Timber
@@ -31,21 +30,16 @@ private val json = Json { ignoreUnknownKeys = true }
  */
 @Singleton
 class EditingStateManager @Inject constructor(
-    @param:ApplicationContext private val context: Context,
+    private val projectHandler: ProjectHandler,
 ) {
     private val stateRef = AtomicReference<EditableState?>(null)
-    private var projectId: Long = 0L
 
-    fun openProject(id: Long): EditableState {
-        require(projectId == 0L || projectId == id) {
-            "Cannot open project $id while $projectId is active. Call closeProject() first."
-        }
-        projectId = id
-        val file = stateFile(id)
+    fun openProject(): EditableState {
+        val file = projectHandler.editStateFile()
         val state = if (file.exists()) {
             json.decodeFromString<EditableState>(file.readText())
         } else {
-            val fresh = EditableState(projectId = id)
+            val fresh = EditableState(projectId = projectHandler.currentProjectId)
             file.parentFile?.mkdirs()
             fresh
         }
@@ -56,16 +50,15 @@ class EditingStateManager @Inject constructor(
 
     fun writeState() {
         val state = stateRef.get() ?: return
-        val file = stateFile(projectId)
+        val file = projectHandler.editStateFile()
         file.parentFile?.mkdirs()
         file.writeText(json.encodeToString(state))
     }
 
     fun closeProject() {
-        if (projectId == 0L) return
+        if (projectHandler.currentProjectId == 0L) return
         writeState()
         stateRef.set(null)
-        projectId = 0L
     }
 
     fun getCurrentState(): EditableState = stateRef.get()
@@ -78,21 +71,16 @@ class EditingStateManager @Inject constructor(
      * Called BEFORE an edit, so snapshot index = current history size.
      */
     fun saveSnapshot(index: Int) {
-        val src = imageFile()
-        if (!src.exists()) return
-        val dst = snapshotFile(index)
+        val src = projectHandler.imageFile()
+        val dst = projectHandler.snapshotFile(index)
         dst.parentFile?.mkdirs()
         src.copyTo(dst, overwrite = true)
         Timber.d("saveSnapshot: step_%d (lastModified=%d)", index, src.lastModified())
     }
 
-    /**
-     * Restore the snapshot at [index] over the working image.
-     * Called on UNDO, where index = history.size after the step was popped.
-     */
     fun restoreSnapshot(index: Int) {
-        val snap = snapshotFile(index)
-        val dst = imageFile()
+        val snap = projectHandler.snapshotFile(index)
+        val dst = projectHandler.imageFile()
         if (!snap.exists()) return
         snap.copyTo(dst, overwrite = true)
         Timber.d("restoreSnapshot: step_%d → image.jpg", index)
@@ -110,7 +98,7 @@ class EditingStateManager @Inject constructor(
         }!!
         writeState()
         val keepCount = next.history.size
-        val snapshotsDir = snapshotsDir()
+        val snapshotsDir = projectHandler.snapshotDir()
         if (snapshotsDir.exists()) {
             snapshotsDir.listFiles()?.forEach { f ->
                 val idx = f.nameWithoutExtension.removePrefix("step_").toIntOrNull()
@@ -163,21 +151,4 @@ class EditingStateManager @Inject constructor(
         val nextType = stack.last().type
         return nextType != EditType.ESRGAN_ENHANCE && nextType != EditType.INPAINTING
     }
-
-    // ── File paths ─────────────────────────────────────────────────────
-
-    fun imageFile(): File =
-        File(projectDir(), "image.jpg")
-
-    private fun stateFile(id: Long): File =
-        File(projectDir(id), "edit_state.json")
-
-    private fun snapshotsDir(): File =
-        File(projectDir(), "snapshots")
-
-    private fun snapshotFile(index: Int): File =
-        File(snapshotsDir(), "step_$index.jpg")
-
-    private fun projectDir(id: Long = projectId): File =
-        File(context.filesDir, "projects/$id")
 }

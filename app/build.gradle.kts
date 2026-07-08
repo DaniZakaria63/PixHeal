@@ -53,10 +53,17 @@ dependencies {
     implementation(project(":litert"))
     implementation(project(":local"))
     implementation(project(":modelpull"))
+
+
+    implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.timber)
+
     implementation(platform(libs.firebase.bom))
-    implementation(libs.androidx.compose.ui.text.google.fonts)
     implementation(libs.firebase.crashlytics.ndk)
     implementation(libs.firebase.config)
+
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
@@ -64,17 +71,17 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.appcompat)
-    implementation(libs.androidx.core.ktx)
-    implementation(libs.hilt.android)
-    ksp(libs.hilt.compiler)
+    implementation(libs.androidx.compose.ui.text.google.fonts)
     implementation(libs.hilt.navigation.compose)
     implementation(libs.navigation.compose)
-    implementation(libs.kotlinx.serialization.json)
+
     implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.coil.compose)
-    implementation(libs.timber)
+
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
