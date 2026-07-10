@@ -37,6 +37,7 @@ class ProjectRepository @Inject constructor(
         )
 
         try {
+            projectHandler.openProject(projectId)
             projectHandler.projectDir().also { it.mkdirs() }
 
             val imageFile = projectHandler.imageFile()
