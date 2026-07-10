@@ -17,9 +17,15 @@ import id.my.daniza.pixheal.data.editing.EditStep
 import id.my.daniza.pixheal.data.editing.EditType
 import id.my.daniza.pixheal.data.editing.EditingStateManager
 import id.my.daniza.pixheal.data.editing.EffectResult
+import id.my.daniza.pixheal.data.ui.BasicAdjustType
+import id.my.daniza.pixheal.data.ui.BasicAdjustValues
+import id.my.daniza.pixheal.data.ui.BasicEditSubTool
+import id.my.daniza.pixheal.data.ui.CropAspectRatio
 import id.my.daniza.pixheal.data.ui.EditTool
 import id.my.daniza.pixheal.data.ui.EditUiState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -52,6 +58,8 @@ class EditViewModel @Inject constructor(
     val downloadState: StateFlow<DownloadState> = modelDownloadRepository.downloadState
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(), DownloadState())
 
+    private var adjustPreviewJob: Job? = null
+
     init {
         _uiState
             .map { it.editHistory }
@@ -71,10 +79,18 @@ class EditViewModel @Inject constructor(
         viewModelScope.launch {
             projectHandler.openProject(id)
             val state = editingStateManager.openProject()
+            val uri = imageFileUri()
+            val dims = withContext(Dispatchers.IO) {
+                val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(projectHandler.imageFile().absolutePath, opts)
+                opts.outWidth to opts.outHeight
+            }
             _uiState.update {
                 it.copy(
-                    imageUri = imageFileUri(),
+                    imageUri = uri,
                     editHistory = state.history,
+                    imageWidth = dims.first,
+                    imageHeight = dims.second,
                 )
             }
         }
@@ -85,7 +101,24 @@ class EditViewModel @Inject constructor(
         if (tool == EditTool.OBJ_REMOVAL) {
             checkModelAvailability()
         }
+        if (tool == EditTool.BASIC_EDIT) {
+            loadImageDims()
+        }
     }
+
+    private fun loadImageDims() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(projectHandler.imageFile().absolutePath, opts)
+                _uiState.update {
+                    it.copy(imageWidth = opts.outWidth, imageHeight = opts.outHeight)
+                }
+            }
+        }
+    }
+
+    // ── Model download ─────────────────────────────────────────────────
 
     private fun checkModelAvailability() {
         viewModelScope.launch {
@@ -139,6 +172,8 @@ class EditViewModel @Inject constructor(
         _uiState.update { it.copy(showDrawGuide = false) }
     }
 
+    // ── Mask drawing ───────────────────────────────────────────────────
+
     fun onMaskDrawStart(x: Float, y: Float) {
         val mask = _uiState.value.maskBitmap ?: return
         drawBrushOnMask(mask, x, y, _uiState.value.brushRadius)
@@ -174,6 +209,8 @@ class EditViewModel @Inject constructor(
         }
         canvas.drawCircle(x, y, radius, paint)
     }
+
+    // ── Inpainting ─────────────────────────────────────────────────────
 
     fun triggerInpainting() {
         val mask = _uiState.value.maskBitmap ?: return
@@ -246,6 +283,8 @@ class EditViewModel @Inject constructor(
         return false
     }
 
+    // ── ESRGAN Enhance ─────────────────────────────────────────────────
+
     fun enhance() {
         val uri = _uiState.value.imageUri ?: run {
             _uiState.update { it.copy(error = "No source image") }
@@ -265,16 +304,209 @@ class EditViewModel @Inject constructor(
                     return@launch
                 }
                 is EffectResult.Success -> {
+                    val nextStep = editingStateManager.pushStep(
+                        EditStep(
+                            id = System.currentTimeMillis(),
+                            type = EditType.ESRGAN_ENHANCE,
+                        )
+                    )
+
                     withContext(Dispatchers.IO) {
                         FileOutputStream(projectHandler.imageFile()).use { out ->
                             result.bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
                         }
+                        
+                        projectRepository.updateProject(
+                            stepCount = nextStep.history.size,
+                            status = "edited",
+                        )
+                        
+                        result.bitmap.recycle()
+                    }
+
+                    _uiState.update {
+                        it.copy(
+                            isProcessing = false,
+                            resultBitmap = null,
+                            imageUri = imageFileUri(),
+                            editHistory = nextStep.history,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Basic Edit: Adjust ─────────────────────────────────────────────
+
+    fun selectBasicSubTool(subTool: BasicEditSubTool) {
+        adjustPreviewJob?.cancel()
+        _uiState.update {
+            it.copy(
+                basicSubTool = subTool,
+                previewBitmap = null,
+                cropActive = subTool == BasicEditSubTool.CROP,
+            )
+        }
+    }
+
+    fun updateAdjustment(type: BasicAdjustType, value: Float) {
+        _uiState.update {
+            it.copy(
+                basicValues = it.basicValues.withValue(type, value),
+                error = null,
+            )
+        }
+        scheduleAdjustPreview()
+    }
+
+    fun resetAdjustments() {
+        adjustPreviewJob?.cancel()
+        _uiState.update {
+            it.copy(
+                basicValues = BasicAdjustValues(),
+                previewBitmap = null,
+            )
+        }
+    }
+
+    private fun scheduleAdjustPreview() {
+        adjustPreviewJob?.cancel()
+        adjustPreviewJob = viewModelScope.launch {
+            delay(250)
+            val currentUri = _uiState.value.imageUri ?: return@launch
+            val values = _uiState.value.basicValues
+            withContext(Dispatchers.IO) {
+                when (val result = editEffectManager.applyBasicAdjustments(currentUri, values)) {
+                    is EffectResult.Success -> {
+                        _uiState.update { it.copy(previewBitmap = result.bitmap) }
+                    }
+                    is EffectResult.Error -> {
+                        _uiState.update { it.copy(error = result.message) }
+                    }
+                }
+            }
+        }
+    }
+
+    fun applyBasicEdits() {
+        val values = _uiState.value.basicValues
+        if (values.isDefault) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isProcessing = true, error = null) }
+
+            val before = editingStateManager.getCurrentState()
+            editingStateManager.saveSnapshot(before.history.size)
+
+            val parameters = mapOf(
+                "brightness" to values.brightness.toString(),
+                "contrast" to values.contrast.toString(),
+                "saturation" to values.saturation.toString(),
+                "shadows" to values.shadows.toString(),
+                "highlights" to values.highlights.toString(),
+                "temperature" to values.temperature.toString(),
+                "vignette" to values.vignette.toString(),
+            )
+
+            var applyError: String? = null
+            withContext(Dispatchers.IO) {
+                val decoded = BitmapFactory.decodeFile(projectHandler.imageFile().absolutePath)
+                if (decoded == null) {
+                    applyError = "Failed to read image"
+                    return@withContext
+                }
+                when (val result = editEffectManager.applyBasicAdjustments(decoded, values)) {
+                    is EffectResult.Success -> {
+                        FileOutputStream(projectHandler.imageFile()).use { out ->
+                            result.bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                        }
+                        result.bitmap.recycle()
+                    }
+                    is EffectResult.Error -> {
+                        applyError = result.message
+                        decoded.recycle()
+                        return@withContext
+                    }
+                }
+                decoded.recycle()
+            }
+
+            if (applyError != null) {
+                _uiState.update { it.copy(isProcessing = false, error = applyError) }
+                return@launch
+            }
+
+            val next = editingStateManager.pushStep(
+                EditStep(
+                    id = System.currentTimeMillis(),
+                    type = EditType.BASIC_ADJUST,
+                    parameters = parameters,
+                )
+            )
+
+            projectRepository.updateProject(
+                stepCount = next.history.size,
+                status = "edited",
+            )
+            projectRepository.regenerateThumbnail()
+
+            loadImageDims()
+            _uiState.update {
+                it.copy(
+                    isProcessing = false,
+                    previewBitmap = null,
+                    basicValues = BasicAdjustValues(),
+                    imageUri = imageFileUri(),
+                    editHistory = next.history,
+                )
+            }
+        }
+    }
+
+    // ── Basic Edit: Crop ───────────────────────────────────────────────
+
+    fun selectCropAspect(aspect: CropAspectRatio) {
+        _uiState.update { it.copy(cropAspectRatio = aspect) }
+    }
+
+    fun applyCrop(cropLeft: Int, cropTop: Int, cropRight: Int, cropBottom: Int) {
+        val imageUri = _uiState.value.imageUri ?: return
+        val cropW = cropRight - cropLeft
+        val cropH = cropBottom - cropTop
+        if (cropW <= 0 || cropH <= 0) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isProcessing = true, error = null) }
+
+            val before = editingStateManager.getCurrentState()
+            editingStateManager.saveSnapshot(before.history.size)
+
+            val parameters = mapOf(
+                "left" to cropLeft.toString(),
+                "top" to cropTop.toString(),
+                "width" to cropW.toString(),
+                "height" to cropH.toString(),
+            )
+
+            when (val result = editEffectManager.crop(imageUri, cropLeft, cropTop, cropW, cropH)) {
+                is EffectResult.Error -> {
+                    _uiState.update { it.copy(isProcessing = false, error = result.message) }
+                    return@launch
+                }
+                is EffectResult.Success -> {
+                    withContext(Dispatchers.IO) {
+                        FileOutputStream(projectHandler.imageFile()).use { out ->
+                            result.bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                        }
+                        result.bitmap.recycle()
                     }
 
                     val next = editingStateManager.pushStep(
                         EditStep(
                             id = System.currentTimeMillis(),
-                            type = EditType.ESRGAN_ENHANCE,
+                            type = EditType.CROP,
+                            parameters = parameters,
                         )
                     )
 
@@ -282,11 +514,13 @@ class EditViewModel @Inject constructor(
                         stepCount = next.history.size,
                         status = "edited",
                     )
+                    projectRepository.regenerateThumbnail()
 
+                    loadImageDims()
                     _uiState.update {
                         it.copy(
                             isProcessing = false,
-                            resultBitmap = result.bitmap,
+                            cropActive = false,
                             imageUri = imageFileUri(),
                             editHistory = next.history,
                         )
@@ -295,6 +529,78 @@ class EditViewModel @Inject constructor(
             }
         }
     }
+
+    fun cancelCrop() {
+        _uiState.update { it.copy(cropActive = false) }
+    }
+
+    // ── Basic Edit: Rotate / Flip ──────────────────────────────────────
+
+    fun rotate90() {
+        applySimpleTransform(EditType.ROTATE, mapOf("degrees" to "90")) { editEffectManager.rotate90(it) }
+    }
+
+    fun rotate270() {
+        applySimpleTransform(EditType.ROTATE, mapOf("degrees" to "270")) { editEffectManager.rotate270(it) }
+    }
+
+    fun flipHorizontal() {
+        applySimpleTransform(EditType.FLIP_HORIZONTAL) { editEffectManager.flipHorizontal(it) }
+    }
+
+    fun flipVertical() {
+        applySimpleTransform(EditType.FLIP_VERTICAL) { editEffectManager.flipVertical(it) }
+    }
+
+    private fun applySimpleTransform(type: EditType, parameters: Map<String, String> = emptyMap(), operation: suspend (Uri) -> EffectResult) {
+        val imageUri = _uiState.value.imageUri ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isProcessing = true, error = null) }
+
+            val before = editingStateManager.getCurrentState()
+            editingStateManager.saveSnapshot(before.history.size)
+
+            when (val result = operation(imageUri)) {
+                is EffectResult.Error -> {
+                    _uiState.update { it.copy(isProcessing = false, error = result.message) }
+                    return@launch
+                }
+                is EffectResult.Success -> {
+                    withContext(Dispatchers.IO) {
+                        FileOutputStream(projectHandler.imageFile()).use { out ->
+                            result.bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                        }
+                        result.bitmap.recycle()
+                    }
+
+                    val next = editingStateManager.pushStep(
+                        EditStep(
+                            id = System.currentTimeMillis(),
+                            type = type,
+                            parameters = parameters,
+                        )
+                    )
+
+                    projectRepository.updateProject(
+                        stepCount = next.history.size,
+                        status = "edited",
+                    )
+                    projectRepository.regenerateThumbnail()
+
+                    loadImageDims()
+                    _uiState.update {
+                        it.copy(
+                            isProcessing = false,
+                            imageUri = imageFileUri(),
+                            editHistory = next.history,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Undo / Redo ────────────────────────────────────────────────────
 
     fun undo() {
         val state = editingStateManager.undo() ?: return
@@ -314,7 +620,6 @@ class EditViewModel @Inject constructor(
                 editHistory = state.history,
             )
         }
-
     }
 
     fun redo() {
