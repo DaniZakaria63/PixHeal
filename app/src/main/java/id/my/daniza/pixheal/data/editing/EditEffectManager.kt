@@ -238,10 +238,23 @@ class EditEffectManager @Inject constructor(
         bitmap.getPixels(origPixels, 0, w, 0, 0, w, h)
         bitmap.recycle()
 
+        val dim = minOf(w, h)
+        val featherPx = (dim * 0.01f).toInt().coerceAtLeast(2)
+        val maskWithFeather = ByteArray(w * h)
+        for (i in maskPixels.indices) {
+            maskWithFeather[i] = ((maskPixels[i] shr 16) and 0xFF).toByte()
+        }
+        applyBoxBlur(maskWithFeather, w, h, featherPx)
+
         for (i in origPixels.indices) {
-            val maskVal = (maskPixels[i] shr 16) and 0xFF
-            if (maskVal > 30) {
+            val maskVal = maskWithFeather[i].toInt() and 0xFF
+            if (maskVal <= 30) {
                 origPixels[i] = 0
+            } else if (maskVal < 255) {
+                val r = ((origPixels[i] shr 16) and 0xFF) * maskVal / 255
+                val g = ((origPixels[i] shr 8) and 0xFF) * maskVal / 255
+                val b = (origPixels[i] and 0xFF) * maskVal / 255
+                origPixels[i] = (maskVal shl 24) or (r shl 16) or (g shl 8) or b
             }
         }
 
@@ -264,13 +277,14 @@ class EditEffectManager @Inject constructor(
             raw[i] = if (mask[i] in foregroundClasses) 255.toByte() else 0.toByte()
         }
 
+        val dim = minOf(w, h).toFloat()
         if (edgeSoften > 0f) {
-            val radius = (edgeSoften * 20f).toInt().coerceAtLeast(1)
+            val radius = (edgeSoften * dim * 0.05f).toInt().coerceAtLeast(1)
             applyBoxBlur(raw, w, h, radius)
         }
 
         if (hardness < 1f) {
-            val edgeWidth = ((1f - hardness) * 10f).toInt().coerceAtLeast(1)
+            val edgeWidth = ((1f - hardness) * dim * 0.05f).toInt().coerceAtLeast(1)
             applyDistanceAlpha(raw, w, h, edgeWidth, threshold)
         }
 
@@ -278,24 +292,55 @@ class EditEffectManager @Inject constructor(
     }
 
     private fun applyBoxBlur(bytes: ByteArray, w: Int, h: Int, radius: Int) {
+        if (radius < 1) return
+        val r = radius.coerceAtMost(50)
         val temp = ByteArray(bytes.size)
-        for (pass in 0 until radius * 2) {
-            for (y in 0 until h) {
-                for (x in 0 until w) {
-                    var sum = 0
-                    var count = 0
-                    for (kx in -radius..radius) {
-                        val sx = (x + kx).coerceIn(0, w - 1)
-                        for (ky in -radius..radius) {
-                            val sy = (y + ky).coerceIn(0, h - 1)
-                            sum += bytes[sy * w + sx].toInt() and 0xFF
-                            count++
-                        }
-                    }
-                    temp[y * w + x] = (sum / count).toByte()
+        boxBlurHorizontal(bytes, temp, w, h, r)
+        boxBlurVertical(temp, bytes, w, h, r)
+    }
+
+    private fun boxBlurHorizontal(src: ByteArray, dst: ByteArray, w: Int, h: Int, radius: Int) {
+        for (y in 0 until h) {
+            val rowStart = y * w
+            var sum = 0
+            var count = 0
+            for (x in -radius until w + radius) {
+                val enterX = (x + radius).coerceIn(0, w - 1)
+                val leaveX = (x - radius - 1).coerceIn(0, w - 1)
+                if (x >= 0) {
+                    sum += src[rowStart + enterX].toInt() and 0xFF
+                    count++
+                }
+                if (x - radius - 1 >= 0) {
+                    sum -= src[rowStart + leaveX].toInt() and 0xFF
+                    count--
+                }
+                if (x >= 0) {
+                    dst[rowStart + x] = (sum / count).toByte()
                 }
             }
-            System.arraycopy(temp, 0, bytes, 0, bytes.size)
+        }
+    }
+
+    private fun boxBlurVertical(src: ByteArray, dst: ByteArray, w: Int, h: Int, radius: Int) {
+        for (x in 0 until w) {
+            var sum = 0
+            var count = 0
+            for (y in -radius until h + radius) {
+                val enterY = (y + radius).coerceIn(0, h - 1)
+                val leaveY = (y - radius - 1).coerceIn(0, h - 1)
+                if (y >= 0) {
+                    sum += src[enterY * w + x].toInt() and 0xFF
+                    count++
+                }
+                if (y - radius - 1 >= 0) {
+                    sum -= src[leaveY * w + x].toInt() and 0xFF
+                    count--
+                }
+                if (y >= 0) {
+                    dst[y * w + x] = (sum / count).toByte()
+                }
+            }
         }
     }
 

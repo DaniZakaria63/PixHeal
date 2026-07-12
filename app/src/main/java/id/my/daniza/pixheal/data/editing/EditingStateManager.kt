@@ -130,7 +130,7 @@ class EditingStateManager @Inject constructor(
         val stack = current.redoStack
         if (stack.isEmpty()) return null
         val step = stack.last()
-        if (step.type == EditType.ESRGAN_ENHANCE || step.type == EditType.INPAINTING) return null
+        if (step.type == EditType.ESRGAN_ENHANCE || step.type == EditType.INPAINTING || step.type == EditType.BG_REMOVAL) return null
         val next = current.copy(
             history = current.history + step,
             redoStack = stack.dropLast(1),
@@ -149,6 +149,6 @@ class EditingStateManager @Inject constructor(
         val stack = stateRef.get()?.redoStack ?: return false
         if (stack.isEmpty()) return false
         val nextType = stack.last().type
-        return nextType != EditType.ESRGAN_ENHANCE && nextType != EditType.INPAINTING
+        return nextType != EditType.ESRGAN_ENHANCE && nextType != EditType.INPAINTING && nextType != EditType.BG_REMOVAL
     }
 }
