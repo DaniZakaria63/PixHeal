@@ -33,7 +33,7 @@ class EditEffectManager @Inject constructor(
     private val mutex = Mutex()
     private var loadedModel: LoadedModel = LoadedModel.NONE
 
-    private enum class LoadedModel { NONE, ESRGAN, AOTGAN }
+    private enum class LoadedModel { NONE, ESRGAN, AOTGAN, DEEPLABV3 }
 
     suspend fun enhance(uri: Uri, qualityMode: Boolean = false): EffectResult = withContext(Dispatchers.IO) {
         val scaleTarget = if (qualityMode) LitertBridge.MODE_QUALITY else LitertBridge.MODE_FAST
@@ -163,6 +163,183 @@ class EditEffectManager @Inject constructor(
         EffectResult.Success(flipped)
     }
 
+    suspend fun segmentImage(uri: Uri): IntArray? = withContext(Dispatchers.IO) {
+        val bitmap = decodeBitmap(uri)
+            ?: return@withContext null
+
+        val loadErr = ensureModelLoaded(LoadedModel.DEEPLABV3)
+        if (loadErr != null) {
+            bitmap.recycle()
+            return@withContext null
+        }
+
+        val result = litertBridge.runSegmentation(bitmap)
+        bitmap.recycle()
+        result
+    }
+
+    suspend fun removeBackground(
+        originalUri: Uri,
+        mask: IntArray,
+        foregroundClasses: Set<Int> = setOf(15),
+        threshold: Float = 0.5f,
+        hardness: Float = 0.5f,
+        edgeSoften: Float = 0f,
+    ): EffectResult = withContext(Dispatchers.IO) {
+        val bitmap = decodeBitmap(originalUri)
+            ?: return@withContext EffectResult.Error("Failed to decode image")
+
+        val w = bitmap.width
+        val h = bitmap.height
+
+        if (mask.size != w * h) {
+            bitmap.recycle()
+            return@withContext EffectResult.Error("Mask size mismatch: expected ${w * h}, got ${mask.size}")
+        }
+
+        val alphaMask = buildAlphaMask(mask, w, h, foregroundClasses, threshold, hardness, edgeSoften)
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+
+        for (i in pixels.indices) {
+            val a = alphaMask[i].toInt() and 0xFF
+            if (a == 0) {
+                pixels[i] = 0
+            } else if (a < 255) {
+                val r = ((pixels[i] shr 16) and 0xFF) * a / 255
+                val g = ((pixels[i] shr 8) and 0xFF) * a / 255
+                val b = (pixels[i] and 0xFF) * a / 255
+                pixels[i] = (a shl 24) or (r shl 16) or (g shl 8) or b
+            }
+        }
+
+        bitmap.recycle()
+        EffectResult.Success(Bitmap.createBitmap(pixels, w, h, Bitmap.Config.ARGB_8888))
+    }
+
+    suspend fun removeBackgroundViaMask(originalUri: Uri, maskBitmap: Bitmap): EffectResult = withContext(Dispatchers.IO) {
+        val bitmap = decodeBitmap(originalUri)
+            ?: return@withContext EffectResult.Error("Failed to decode image")
+
+        val w = bitmap.width
+        val h = bitmap.height
+
+        val maskScaled = if (maskBitmap.width != w || maskBitmap.height != h) {
+            Bitmap.createScaledBitmap(maskBitmap, w, h, false)
+        } else {
+            maskBitmap
+        }
+
+        val maskPixels = IntArray(w * h)
+        maskScaled.getPixels(maskPixels, 0, w, 0, 0, w, h)
+        if (maskScaled !== maskBitmap) maskScaled.recycle()
+
+        val origPixels = IntArray(w * h)
+        bitmap.getPixels(origPixels, 0, w, 0, 0, w, h)
+        bitmap.recycle()
+
+        for (i in origPixels.indices) {
+            val maskVal = (maskPixels[i] shr 16) and 0xFF
+            if (maskVal > 30) {
+                origPixels[i] = 0
+            }
+        }
+
+        EffectResult.Success(Bitmap.createBitmap(origPixels, w, h, Bitmap.Config.ARGB_8888))
+    }
+
+    private fun buildAlphaMask(
+        mask: IntArray,
+        w: Int,
+        h: Int,
+        foregroundClasses: Set<Int>,
+        threshold: Float,
+        hardness: Float,
+        edgeSoften: Float,
+    ): ByteArray {
+        val size = w * h
+        val raw = ByteArray(size)
+
+        for (i in mask.indices) {
+            raw[i] = if (mask[i] in foregroundClasses) 255.toByte() else 0.toByte()
+        }
+
+        if (edgeSoften > 0f) {
+            val radius = (edgeSoften * 20f).toInt().coerceAtLeast(1)
+            applyBoxBlur(raw, w, h, radius)
+        }
+
+        if (hardness < 1f) {
+            val edgeWidth = ((1f - hardness) * 10f).toInt().coerceAtLeast(1)
+            applyDistanceAlpha(raw, w, h, edgeWidth, threshold)
+        }
+
+        return raw
+    }
+
+    private fun applyBoxBlur(bytes: ByteArray, w: Int, h: Int, radius: Int) {
+        val temp = ByteArray(bytes.size)
+        for (pass in 0 until radius * 2) {
+            for (y in 0 until h) {
+                for (x in 0 until w) {
+                    var sum = 0
+                    var count = 0
+                    for (kx in -radius..radius) {
+                        val sx = (x + kx).coerceIn(0, w - 1)
+                        for (ky in -radius..radius) {
+                            val sy = (y + ky).coerceIn(0, h - 1)
+                            sum += bytes[sy * w + sx].toInt() and 0xFF
+                            count++
+                        }
+                    }
+                    temp[y * w + x] = (sum / count).toByte()
+                }
+            }
+            System.arraycopy(temp, 0, bytes, 0, bytes.size)
+        }
+    }
+
+    private fun applyDistanceAlpha(bytes: ByteArray, w: Int, h: Int, edgeWidth: Int, threshold: Float) {
+        val dist = IntArray(bytes.size) { Int.MAX_VALUE }
+        val queue = ArrayDeque<Int>()
+
+        for (i in bytes.indices) {
+            val a = bytes[i].toInt() and 0xFF
+            if (a == 0) {
+                dist[i] = 0
+                queue.addLast(i)
+            }
+            if (a == 255) {
+                bytes[i] = 255.toByte()
+            }
+        }
+
+        while (queue.isNotEmpty()) {
+            val idx = queue.removeFirst()
+            val d = dist[idx]
+            if (d >= edgeWidth) continue
+
+            val x = idx % w
+            val y = idx / w
+            val neighbors = listOf(
+                if (x > 0) idx - 1 else -1,
+                if (x < w - 1) idx + 1 else -1,
+                if (y > 0) idx - w else -1,
+                if (y < h - 1) idx + w else -1,
+            )
+
+            for (nIdx in neighbors) {
+                if (nIdx >= 0 && dist[nIdx] > d + 1) {
+                    dist[nIdx] = d + 1
+                    queue.addLast(nIdx)
+                    val t = (dist[nIdx].toFloat() / edgeWidth).coerceIn(0f, 1f)
+                    val alpha = (t * 255f).toInt()
+                    bytes[nIdx] = ((alpha * threshold).coerceIn(0f, 255f)).toInt().toByte()
+                }
+            }
+        }
+    }
+
     private fun applyAdjustmentsToBitmap(source: Bitmap, values: BasicAdjustValues): Bitmap {
         val w = source.width
         val h = source.height
@@ -276,6 +453,7 @@ class EditEffectManager @Inject constructor(
                         litertBridge.loadModelFromFile(file)
                     }
                     LoadedModel.NONE -> return null
+                    LoadedModel.DEEPLABV3 -> litertBridge.loadModel("deeplabv3/deeplabv3_plus_mobilenet.tflite")
                 }
                 loadedModel = target
                 null

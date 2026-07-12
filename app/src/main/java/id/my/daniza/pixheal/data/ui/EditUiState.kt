@@ -4,6 +4,11 @@ import android.graphics.Bitmap
 import android.net.Uri
 import id.my.daniza.pixheal.data.editing.EditStep
 
+enum class BgRemovalMode(val label: String) {
+    AUTO("Auto"),
+    MANUAL("Manual"),
+}
+
 enum class EditTool(val label: String) {
     ENHANCER("Enhancer"),
     OBJ_REMOVAL("Obj Removal"),
@@ -86,4 +91,10 @@ data class EditUiState(
     val cropAspectRatio: CropAspectRatio = CropAspectRatio.FREE,
     val imageWidth: Int = 0,
     val imageHeight: Int = 0,
+    val bgRemovalMode: BgRemovalMode = BgRemovalMode.AUTO,
+    val segmentationOverlay: Bitmap? = null,
+    val bgThreshold: Float = 0.5f,
+    val bgHardness: Float = 0.5f,
+    val bgEdgeSoften: Float = 0f,
+    val isSegmenting: Boolean = false,
 )

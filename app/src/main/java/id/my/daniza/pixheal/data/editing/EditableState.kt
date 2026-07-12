@@ -26,4 +26,5 @@ enum class EditType {
     BASIC_ADJUST,
     FLIP_HORIZONTAL,
     FLIP_VERTICAL,
+    BG_REMOVAL,
 }
