@@ -304,15 +304,13 @@ class EditEffectManager @Inject constructor(
             val rowStart = y * w
             var sum = 0
             var count = 0
-            for (x in -radius until w + radius) {
-                val enterX = (x + radius).coerceIn(0, w - 1)
-                val leaveX = (x - radius - 1).coerceIn(0, w - 1)
-                if (x >= 0) {
-                    sum += src[rowStart + enterX].toInt() and 0xFF
-                    count++
-                }
+            for (x in -radius until w) {
+                val enterIdx = (x + radius).coerceIn(0, w - 1)
+                sum += src[rowStart + enterIdx].toInt() and 0xFF
+                count++
                 if (x - radius - 1 >= 0) {
-                    sum -= src[rowStart + leaveX].toInt() and 0xFF
+                    val leaveIdx = x - radius - 1
+                    sum -= src[rowStart + leaveIdx].toInt() and 0xFF
                     count--
                 }
                 if (x >= 0) {
@@ -326,15 +324,13 @@ class EditEffectManager @Inject constructor(
         for (x in 0 until w) {
             var sum = 0
             var count = 0
-            for (y in -radius until h + radius) {
-                val enterY = (y + radius).coerceIn(0, h - 1)
-                val leaveY = (y - radius - 1).coerceIn(0, h - 1)
-                if (y >= 0) {
-                    sum += src[enterY * w + x].toInt() and 0xFF
-                    count++
-                }
+            for (y in -radius until h) {
+                val enterIdx = (y + radius).coerceIn(0, h - 1)
+                sum += src[enterIdx * w + x].toInt() and 0xFF
+                count++
                 if (y - radius - 1 >= 0) {
-                    sum -= src[leaveY * w + x].toInt() and 0xFF
+                    val leaveIdx = y - radius - 1
+                    sum -= src[leaveIdx * w + x].toInt() and 0xFF
                     count--
                 }
                 if (y >= 0) {

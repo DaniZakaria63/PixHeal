@@ -88,6 +88,7 @@ import id.my.daniza.pixheal.data.editing.EditStep
 import id.my.daniza.pixheal.data.editing.EditType
 import id.my.daniza.pixheal.data.ui.BasicAdjustType
 import id.my.daniza.pixheal.data.ui.BasicEditSubTool
+import id.my.daniza.pixheal.data.ui.BgRemovalMode
 import id.my.daniza.pixheal.data.ui.CropAspectRatio
 import id.my.daniza.pixheal.data.ui.EditTool
 import id.my.daniza.pixheal.data.ui.EditUiState
@@ -231,6 +232,7 @@ fun EditScreen(
                 EditTool.ENHANCER -> EnhancerContent(viewModel = viewModel, uiState = uiState)
                 EditTool.OBJ_REMOVAL -> ObjRemovalContent(viewModel = viewModel, uiState = uiState)
                 EditTool.BASIC_EDIT -> BasicEditContent(viewModel = viewModel, uiState = uiState)
+                EditTool.BG_REMOVAL -> BgRemovalContent(viewModel = viewModel, uiState = uiState)
                 else -> EnhancerContent(viewModel = viewModel, uiState = uiState)
             }
 
@@ -1196,4 +1198,344 @@ private fun EditStep.displayName(): String = when (type) {
     EditType.BASIC_ADJUST -> "Adjusted"
     EditType.FLIP_HORIZONTAL -> "Flipped H"
     EditType.FLIP_VERTICAL -> "Flipped V"
+    EditType.BG_REMOVAL -> "BG Removed"
+}
+
+@Composable
+private fun ColumnScope.BgRemovalContent(viewModel: EditViewModel, uiState: EditUiState) {
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .weight(1f)
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .onGloballyPositioned { containerSize = it.size }
+            .pointerInput(uiState.bgRemovalMode) {
+                detectTransformGestures { centroid, pan, zoom, _ ->
+                    val oldScale = scale
+                    val newScale = (oldScale * zoom).coerceIn(1f, 5f)
+                    val previousCentroid = centroid - pan
+                    val imagePoint = (previousCentroid - offset) / oldScale
+                    offset = centroid - imagePoint * newScale
+                    scale = newScale
+                }
+            }
+            .pointerInput(uiState.bgRemovalMode, uiState.isProcessing, uiState.isSegmenting) {
+                if (uiState.isProcessing || uiState.isSegmenting) return@pointerInput
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull() ?: continue
+                        val position = change.position
+
+                        val imgW = uiState.imageWidth
+                        val imgH = uiState.imageHeight
+                        if (imgW <= 0 || imgH <= 0) continue
+
+                        val imageCoord = screenToImageCoord(
+                            screenX = position.x,
+                            screenY = position.y,
+                            containerW = containerSize.width,
+                            containerH = containerSize.height,
+                            imageW = imgW,
+                            imageH = imgH,
+                            scale = scale,
+                            offsetX = offset.x,
+                            offsetY = offset.y,
+                        ) ?: continue
+
+                        if (change.pressed) {
+                            if (!change.previousPressed) {
+                                viewModel.handleBgTouchStart(imageCoord.first, imageCoord.second)
+                            } else {
+                                viewModel.handleBgTouchMove(imageCoord.first, imageCoord.second)
+                            }
+                            change.consume()
+                        } else if (change.previousPressed) {
+                            viewModel.handleBgTouchEnd()
+                            change.consume()
+                        }
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        val imageUri = uiState.imageUri
+
+        if (imageUri != null) {
+            AsyncImage(
+                model = imageUri,
+                contentDescription = "Image",
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = offset.x
+                        translationY = offset.y
+                    },
+                contentScale = ContentScale.Fit,
+            )
+
+            val overlay = uiState.segmentationOverlay
+            if (overlay != null) {
+                Image(
+                    bitmap = overlay.asImageBitmap(),
+                    contentDescription = "Segmentation overlay",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                            translationX = offset.x
+                            translationY = offset.y
+                        },
+                    contentScale = ContentScale.Fit,
+                )
+            }
+
+            val maskBitmap = uiState.maskBitmap
+            if (uiState.bgRemovalMode == BgRemovalMode.MANUAL && maskBitmap != null) {
+                Image(
+                    bitmap = maskBitmap.asImageBitmap(),
+                    contentDescription = "Manual mask overlay",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                            translationX = offset.x
+                            translationY = offset.y
+                            alpha = 0.4f
+                        },
+                    contentScale = ContentScale.Fit,
+                )
+            }
+        } else {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Loading project...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+
+        if (uiState.isSegmenting) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(androidx.compose.ui.graphics.Color(0x64000000)),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(32.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(8.dp))
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        BgRemovalMode.entries.forEach { mode ->
+            val selected = uiState.bgRemovalMode == mode
+            AssistChip(
+                onClick = { viewModel.selectBgRemovalMode(mode) },
+                label = { Text(mode.label, style = MaterialTheme.typography.labelSmall) },
+                modifier = Modifier.background(
+                    color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shape = MaterialTheme.shapes.small,
+                ),
+            )
+        }
+    }
+
+    Spacer(modifier = Modifier.height(8.dp))
+
+    when (uiState.bgRemovalMode) {
+        BgRemovalMode.AUTO -> {
+            if (uiState.segmentationOverlay != null) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text("Threshold", style = MaterialTheme.typography.labelSmall)
+                    Slider(
+                        value = uiState.bgThreshold,
+                        onValueChange = { viewModel.setBgThreshold(it) },
+                        valueRange = 0f..1f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = MaterialTheme.colorScheme.primary,
+                            activeTrackColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+
+                    Text("Hardness", style = MaterialTheme.typography.labelSmall)
+                    Slider(
+                        value = uiState.bgHardness,
+                        onValueChange = { viewModel.setBgHardness(it) },
+                        valueRange = 0f..1f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = MaterialTheme.colorScheme.primary,
+                            activeTrackColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+
+                    Text("Edge Soften", style = MaterialTheme.typography.labelSmall)
+                    Slider(
+                        value = uiState.bgEdgeSoften,
+                        onValueChange = { viewModel.setBgEdgeSoften(it) },
+                        valueRange = 0f..1f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = MaterialTheme.colorScheme.primary,
+                            activeTrackColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilledTonalButton(
+                            onClick = { viewModel.applyBgRemoval() },
+                            enabled = !uiState.isProcessing,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Remove Background", style = MaterialTheme.typography.labelMedium)
+                        }
+                        TextButton(
+                            onClick = { viewModel.cancelBgRemoval() },
+                            enabled = !uiState.isProcessing,
+                        ) {
+                            Text("Cancel", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        "Tap anywhere to detect the person and remove background automatically",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    FilledTonalButton(
+                        onClick = { viewModel.runAutoSegment() },
+                        enabled = !uiState.isSegmenting,
+                    ) {
+                        if (uiState.isSegmenting) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Segmenting...")
+                        } else {
+                            Text("Auto-Select Person")
+                        }
+                    }
+                }
+            }
+
+            if (uiState.isProcessing) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(12.dp),
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text("Removing background...", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        BgRemovalMode.MANUAL -> {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("Brush:", style = MaterialTheme.typography.labelSmall)
+                Slider(
+                    value = uiState.brushRadius,
+                    onValueChange = { viewModel.setBrushRadius(it) },
+                    valueRange = 10f..100f,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    "${uiState.brushRadius.toInt()}px",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            ) {
+                IconButton(
+                    onClick = { viewModel.clearManualMask() },
+                    enabled = !uiState.isProcessing,
+                ) {
+                    Icon(
+                        Icons.Filled.Delete,
+                        contentDescription = "Clear mask",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                Text(
+                    "Clear mask",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (uiState.isProcessing) MaterialTheme.colorScheme.onSurfaceVariant
+                        .copy(alpha = 0.4f) else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.clickable(enabled = !uiState.isProcessing) { viewModel.clearManualMask() },
+                )
+            }
+
+            Text(
+                "Draw on the area you want to keep (the rest will be removed)",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 12.dp),
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            FilledTonalButton(
+                onClick = { viewModel.applyManualBgRemoval() },
+                enabled = uiState.maskBitmap != null && !uiState.isProcessing,
+                modifier = Modifier.padding(horizontal = 12.dp),
+            ) {
+                if (uiState.isProcessing) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Removing...")
+                } else {
+                    Text("Remove Background")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+    }
 }

@@ -20,6 +20,7 @@ import id.my.daniza.pixheal.data.editing.EffectResult
 import id.my.daniza.pixheal.data.ui.BasicAdjustType
 import id.my.daniza.pixheal.data.ui.BasicAdjustValues
 import id.my.daniza.pixheal.data.ui.BasicEditSubTool
+import id.my.daniza.pixheal.data.ui.BgRemovalMode
 import id.my.daniza.pixheal.data.ui.CropAspectRatio
 import id.my.daniza.pixheal.data.ui.EditTool
 import id.my.daniza.pixheal.data.ui.EditUiState
@@ -100,8 +101,12 @@ class EditViewModel @Inject constructor(
         _uiState.update { it.copy(selectedTool = tool) }
         if (tool == EditTool.OBJ_REMOVAL) {
             checkModelAvailability()
-        }
-        if (tool == EditTool.BASIC_EDIT) {
+        } else if (tool == EditTool.BASIC_EDIT) {
+            loadImageDims()
+            if (_uiState.value.basicValues != BasicAdjustValues()) {
+                scheduleAdjustPreview()
+            }
+        } else if (tool == EditTool.BG_REMOVAL) {
             loadImageDims()
         }
     }
@@ -635,6 +640,241 @@ class EditViewModel @Inject constructor(
         }
     }
 
+    private var segmentationCache: IntArray? = null
+
+    // ── Background Removal ─────────────────────────────────────────────
+
+    fun selectBgRemovalMode(mode: BgRemovalMode) {
+        _uiState.update { it.copy(bgRemovalMode = mode) }
+        if (mode == BgRemovalMode.MANUAL && _uiState.value.maskBitmap == null) {
+            initMaskBitmap()
+        }
+    }
+
+    fun runAutoSegment() {
+        val imageUri = _uiState.value.imageUri ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSegmenting = true, error = null) }
+            val mask = withContext(Dispatchers.IO) {
+                editEffectManager.segmentImage(imageUri)
+            }
+            if (mask != null) {
+                segmentationCache = mask
+                _uiState.update {
+                    it.copy(
+                        isSegmenting = false,
+                        segmentationOverlay = buildSegmentationOverlay(mask),
+                    )
+                }
+            } else {
+                _uiState.update {
+                    it.copy(isSegmenting = false, error = "Segmentation failed")
+                }
+            }
+        }
+    }
+
+    fun handleBgTouchStart(x: Float, y: Float) {
+        val mode = _uiState.value.bgRemovalMode
+        if (mode == BgRemovalMode.MANUAL) {
+            onManualDrawStart(x, y)
+        }
+    }
+
+    fun handleBgTouchMove(x: Float, y: Float) {
+        val mode = _uiState.value.bgRemovalMode
+        if (mode == BgRemovalMode.MANUAL) {
+            onManualDrawMove(x, y)
+        }
+    }
+
+    fun handleBgTouchEnd() {
+        val mode = _uiState.value.bgRemovalMode
+        if (mode == BgRemovalMode.MANUAL) {
+            onManualDrawEnd()
+        }
+    }
+
+    fun setBgThreshold(value: Float) {
+        _uiState.update { it.copy(bgThreshold = value) }
+    }
+
+    fun setBgHardness(value: Float) {
+        _uiState.update { it.copy(bgHardness = value) }
+    }
+
+    fun setBgEdgeSoften(value: Float) {
+        _uiState.update { it.copy(bgEdgeSoften = value) }
+    }
+
+    fun applyBgRemoval() {
+        val imageUri = _uiState.value.imageUri ?: return
+        val mask = segmentationCache ?: run {
+            _uiState.update { it.copy(error = "Run segmentation first") }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isProcessing = true, error = null) }
+
+            val before = editingStateManager.getCurrentState()
+            editingStateManager.saveSnapshot(before.history.size)
+
+            val threshold = _uiState.value.bgThreshold
+            val hardness = _uiState.value.bgHardness
+            val edgeSoften = _uiState.value.bgEdgeSoften
+
+            when (val result = withContext(Dispatchers.IO) {
+                editEffectManager.removeBackground(imageUri, mask, setOf(15), threshold, hardness, edgeSoften)
+            }) {
+                is EffectResult.Error -> {
+                    _uiState.update { it.copy(isProcessing = false, error = result.message) }
+                    return@launch
+                }
+                is EffectResult.Success -> {
+                    withContext(Dispatchers.IO) {
+                        FileOutputStream(projectHandler.imageFile()).use { out ->
+                            result.bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                        }
+                        result.bitmap.recycle()
+                    }
+
+                    val next = editingStateManager.pushStep(
+                        EditStep(
+                            id = System.currentTimeMillis(),
+                            type = EditType.BG_REMOVAL,
+                            parameters = mapOf(
+                                "mode" to "auto",
+                                "threshold" to threshold.toString(),
+                                "hardness" to hardness.toString(),
+                                "edgeSoften" to edgeSoften.toString(),
+                            ),
+                        )
+                    )
+
+                    projectRepository.updateProject(
+                        stepCount = next.history.size,
+                        status = "edited",
+                    )
+                    projectRepository.regenerateThumbnail()
+
+                    segmentationCache = null
+                    loadImageDims()
+                    _uiState.update {
+                        it.copy(
+                            isProcessing = false,
+                            segmentationOverlay = null,
+                            imageUri = imageFileUri(),
+                            editHistory = next.history,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun onManualDrawStart(x: Float, y: Float) {
+        val mask = _uiState.value.maskBitmap ?: return
+        drawBrushOnMask(mask, x, y, _uiState.value.brushRadius)
+        _uiState.update { it.copy(maskBitmap = mask.copy(Bitmap.Config.ARGB_8888, true), isMaskDrawing = true) }
+    }
+
+    fun onManualDrawMove(x: Float, y: Float) {
+        val mask = _uiState.value.maskBitmap ?: return
+        drawBrushOnMask(mask, x, y, _uiState.value.brushRadius)
+        _uiState.update { it.copy(maskBitmap = mask.copy(Bitmap.Config.ARGB_8888, true)) }
+    }
+
+    fun onManualDrawEnd() {
+        _uiState.update { it.copy(isMaskDrawing = false) }
+    }
+
+    fun clearManualMask() {
+        val mask = _uiState.value.maskBitmap
+        mask?.eraseColor(android.graphics.Color.TRANSPARENT)
+        _uiState.update { it.copy(maskBitmap = mask) }
+    }
+
+    fun applyManualBgRemoval() {
+        val mask = _uiState.value.maskBitmap ?: return
+        val imageUri = _uiState.value.imageUri ?: return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isProcessing = true, error = null) }
+
+            val before = editingStateManager.getCurrentState()
+            editingStateManager.saveSnapshot(before.history.size)
+
+            val maskPixels = IntArray(mask.width * mask.height)
+            mask.getPixels(maskPixels, 0, mask.width, 0, 0, mask.width, mask.height)
+
+            val result = withContext(Dispatchers.IO) {
+                editEffectManager.removeBackgroundViaMask(imageUri, mask)
+            }
+
+            when (result) {
+                is EffectResult.Error -> {
+                    _uiState.update { it.copy(isProcessing = false, error = result.message) }
+                    return@launch
+                }
+                is EffectResult.Success -> {
+                    withContext(Dispatchers.IO) {
+                        FileOutputStream(projectHandler.imageFile()).use { out ->
+                            result.bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                        }
+                        result.bitmap.recycle()
+                    }
+
+                    val next = editingStateManager.pushStep(
+                        EditStep(
+                            id = System.currentTimeMillis(),
+                            type = EditType.BG_REMOVAL,
+                            parameters = mapOf("mode" to "manual"),
+                        )
+                    )
+
+                    projectRepository.updateProject(
+                        stepCount = next.history.size,
+                        status = "edited",
+                    )
+                    projectRepository.regenerateThumbnail()
+
+                    clearManualMask()
+                    loadImageDims()
+                    _uiState.update {
+                        it.copy(
+                            isProcessing = false,
+                            imageUri = imageFileUri(),
+                            editHistory = next.history,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun buildSegmentationOverlay(mask: IntArray): Bitmap? {
+        val w = _uiState.value.imageWidth
+        val h = _uiState.value.imageHeight
+        if (w <= 0 || h <= 0 || mask.size != w * h) return null
+
+        val pixels = IntArray(w * h)
+        for (i in pixels.indices) {
+            pixels[i] = if (mask[i] == 15) {
+                0x00000000
+            } else {
+                0xAAFFFFFF.toInt()
+            }
+        }
+        return Bitmap.createBitmap(pixels, w, h, Bitmap.Config.ARGB_8888)
+    }
+
+    fun cancelBgRemoval() {
+        segmentationCache = null
+        _uiState.value.segmentationOverlay?.recycle()
+        _uiState.update { it.copy(segmentationOverlay = null, error = null) }
+    }
+
     private fun imageFileUri(): Uri {
         val file = projectHandler.imageFile()
         return "file://${file.absolutePath}?t=${System.currentTimeMillis()}".toUri()
@@ -658,6 +898,8 @@ class EditViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
+        segmentationCache = null
+        _uiState.value.segmentationOverlay?.recycle()
         editingStateManager.closeProject()
         projectHandler.closeProject()
     }
