@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "864262678408",
+    "project_id": "pixheal-27452",
+    "storage_bucket": "pixheal-27452.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:864262678408:android:eddab832d1430df0707c3d",
+        "android_client_info": {
+          "package_name": "id.my.daniza.pixheal"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBpS57TrgCLrkuN1fkN8LvMQVx1lBjlrII"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:864262678408:android:5c3e794f07e3f591707c3d",
+        "android_client_info": {
+          "package_name": "id.my.daniza.pixheal.dev"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBpS57TrgCLrkuN1fkN8LvMQVx1lBjlrII"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
