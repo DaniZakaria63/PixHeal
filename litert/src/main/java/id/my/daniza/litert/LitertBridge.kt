@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
 import timber.log.Timber
 import java.io.File
@@ -45,13 +46,17 @@ class LitertBridge @Inject constructor(
         private const val UPSCALE_ESRGAN = 4
         const val MODE_FAST = 128
         const val MODE_QUALITY = 256
+
+        const val DEEPLABV3_INPUT = 520
+        const val DEEPLABV3_NUM_CLASSES = 21
+        const val DEEPLABV3_BG_CLASS = 0
     }
 
     val isLoaded get() = modelBytes != null
 
     fun loadModel(assetPath: String) {
         close()
-        val fd = context.assets.openFd(assetPath)
+        val fd = context.assets.openFd("$assetPath")
         val input = FileInputStream(fd.fileDescriptor)
         val channel = input.channel
         modelBytes = channel.map(
@@ -269,6 +274,48 @@ class LitertBridge @Inject constructor(
         val upscaled = Bitmap.createScaledBitmap(result, origW, origH, true)
         result.recycle()
         upscaled
+    }
+
+    suspend fun runSegmentation(bitmap: Bitmap): IntArray? = withContext(Dispatchers.IO) {
+        val bytes = modelBytes ?: return@withContext null
+
+        val w = bitmap.width
+        val h = bitmap.height
+
+        val scaled = bitmap.scale(DEEPLABV3_INPUT, DEEPLABV3_INPUT, true)
+        val input = pixelsToUint8Buffer(scaled)
+        scaled.recycle()
+
+        val interp = makeInterpreter()
+        try {
+            val output = ByteBuffer.allocateDirect(DEEPLABV3_INPUT * DEEPLABV3_INPUT)
+                .order(ByteOrder.nativeOrder())
+            interp.run(input, output)
+            output.rewind()
+
+            val rawMask = IntArray(DEEPLABV3_INPUT * DEEPLABV3_INPUT)
+            for (i in rawMask.indices) {
+                rawMask[i] = (output.get().toInt() and 0xFF).coerceAtMost(DEEPLABV3_NUM_CLASSES - 1)
+            }
+            if (w != DEEPLABV3_INPUT || h != DEEPLABV3_INPUT) {
+                val scaledMask = Bitmap.createBitmap(DEEPLABV3_INPUT, DEEPLABV3_INPUT, Bitmap.Config.ARGB_8888)
+                val maskPixels = IntArray(DEEPLABV3_INPUT * DEEPLABV3_INPUT)
+                for (i in rawMask.indices) {
+                    maskPixels[i] = rawMask[i]
+                }
+                scaledMask.setPixels(maskPixels, 0, DEEPLABV3_INPUT, 0, 0, DEEPLABV3_INPUT, DEEPLABV3_INPUT)
+                val resized = Bitmap.createScaledBitmap(scaledMask, w, h, false)
+                scaledMask.recycle()
+                val result = IntArray(w * h)
+                resized.getPixels(result, 0, w, 0, 0, w, h)
+                resized.recycle()
+                result
+            } else {
+                rawMask
+            }
+        } finally {
+            interp.close()
+        }
     }
 
     private fun padBitmap(source: Bitmap, targetW: Int, targetH: Int): Bitmap {

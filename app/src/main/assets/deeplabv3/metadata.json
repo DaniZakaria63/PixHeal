@@ -1,0 +1,49 @@
+{
+    "model_id": "deeplabv3_plus_mobilenet",
+    "model_name": "DeepLabV3-Plus-MobileNet",
+    "runtime": "tflite",
+    "precision": "w8a8",
+    "tool_versions": {
+        "qairt": "2.45.0.260326154327",
+        "litert": "1.4.4"
+    },
+    "model_files": {
+        "deeplabv3_plus_mobilenet.tflite": {
+            "inputs": {
+                "image": {
+                    "shape": [
+                        1,
+                        520,
+                        520,
+                        3
+                    ],
+                    "dtype": "uint8",
+                    "quantization_parameters": {
+                        "scale": 0.003921568859368563,
+                        "zero_point": 0
+                    },
+                    "io_type": "image",
+                    "image_metadata": {},
+                    "value_range": [
+                        0.0,
+                        1.0
+                    ]
+                }
+            },
+            "outputs": {
+                "mask": {
+                    "shape": [
+                        1,
+                        520,
+                        520
+                    ],
+                    "dtype": "uint8",
+                    "description": "Semantic segmentation mask"
+                }
+            }
+        }
+    },
+    "supplementary_files": {
+        "labels.txt": "Mapping of model prediction indices -> string labels."
+    }
+}

@@ -23,6 +23,8 @@ enum class EditType {
     INPAINTING,
     CROP,
     ROTATE,
-    ADJUST_BRIGHTNESS,
-    ADJUST_CONTRAST,
+    BASIC_ADJUST,
+    FLIP_HORIZONTAL,
+    FLIP_VERTICAL,
+    BG_REMOVAL,
 }
