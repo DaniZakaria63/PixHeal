@@ -289,20 +289,26 @@ private fun BottomToolBar(viewModel: EditViewModel, selectedTool: EditTool) {
 private fun ColumnScope.EnhancerContent(viewModel: EditViewModel, uiState: EditUiState) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .weight(1f)
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .onGloballyPositioned { containerSize = it.size }
             .pointerInput(Unit) {
                 detectTransformGestures { centroid, pan, zoom, _ ->
                     val oldScale = scale
-                    val newScale = (oldScale * zoom).coerceIn(1f, 5f)
+                    val newScale = (oldScale * zoom).coerceIn(1f, MAX_SCALE)
                     val previousCentroid = centroid - pan
                     val imagePoint = (previousCentroid - offset) / oldScale
                     offset = centroid - imagePoint * newScale
                     scale = newScale
+                    offset = clampOffsetToFrame(
+                        offset, scale, containerSize.width, containerSize.height,
+                        uiState.imageWidth, uiState.imageHeight,
+                    )
                 }
             },
         contentAlignment = Alignment.Center,
@@ -405,10 +411,17 @@ private fun ColumnScope.ObjRemovalContent(viewModel: EditViewModel, uiState: Edi
             }
             .pointerInput(uiState.modelAvailable) {
                 if (!uiState.modelAvailable) return@pointerInput
-                detectTransformGestures { _, pan, zoom, _ ->
+                detectTransformGestures { centroid, pan, zoom, _ ->
                     val oldScale = scale
-                    val newScale = (oldScale * zoom).coerceIn(1f, 5f)
+                    val newScale = (oldScale * zoom).coerceIn(1f, MAX_SCALE)
+                    val previousCentroid = centroid - pan
+                    val imagePoint = (previousCentroid - offset) / oldScale
+                    offset = centroid - imagePoint * newScale
                     scale = newScale
+                    offset = clampOffsetToFrame(
+                        offset, scale, containerSize.width, containerSize.height,
+                        uiState.imageWidth, uiState.imageHeight,
+                    )
                 }
             }
             .pointerInput(uiState.modelAvailable, uiState.isProcessing) {
@@ -740,11 +753,15 @@ private fun ColumnScope.BasicEditContent(viewModel: EditViewModel, uiState: Edit
                     Modifier.pointerInput(Unit) {
                         detectTransformGestures { centroid, pan, zoom, _ ->
                             val oldScale = scale
-                            val newScale = (oldScale * zoom).coerceIn(1f, 5f)
+                            val newScale = (oldScale * zoom).coerceIn(1f, MAX_SCALE)
                             val previousCentroid = centroid - pan
                             val imagePoint = (previousCentroid - offset) / oldScale
                             offset = centroid - imagePoint * newScale
                             scale = newScale
+                            offset = clampOffsetToFrame(
+                                offset, scale, containerSize.width, containerSize.height,
+                                imageW, imageH,
+                            )
                         }
                     }
                 }
@@ -1184,6 +1201,40 @@ private fun imageFitRect(
     return android.graphics.RectF(left, top, left + fitW, top + fitH)
 }
 
+private const val MAX_SCALE = 5f
+
+/**
+ * Clamps the translation [offset] so the scaled (and letterboxed) bitmap stays
+ * inside the container on both axes. At [scale] <= 1 the bitmap already fits the
+ * frame on its constraining axis, so the clamp pins it centered — preventing any
+ * overflow when zoomed out to 1:1.
+ */
+private fun clampOffsetToFrame(
+    offset: Offset,
+    scale: Float,
+    containerW: Int,
+    containerH: Int,
+    imageW: Int,
+    imageH: Int,
+): Offset {
+    if (containerW <= 0 || containerH <= 0 || imageW <= 0 || imageH <= 0) return offset
+    val fit = imageFitRect(containerW, containerH, imageW, imageH)
+    val scaledW = fit.width() * scale
+    val scaledH = fit.height() * scale
+    val offsetX = if (scaledW <= containerW) {
+        0f
+    } else {
+        // Symmetric range keeping the scaled image within the frame on both edges.
+        offset.x.coerceIn((containerW - scaledW) / 2f, (scaledW - containerW) / 2f)
+    }
+    val offsetY = if (scaledH <= containerH) {
+        0f
+    } else {
+        offset.y.coerceIn((containerH - scaledH) / 2f, (scaledH - containerH) / 2f)
+    }
+    return Offset(offsetX, offsetY)
+}
+
 private fun BasicEditSubTool.displayName(): String = when (this) {
     BasicEditSubTool.ADJUST -> "Adjust"
     BasicEditSubTool.CROP -> "Crop"
@@ -1216,11 +1267,15 @@ private fun ColumnScope.BgRemovalContent(viewModel: EditViewModel, uiState: Edit
             .pointerInput(uiState.bgRemovalMode) {
                 detectTransformGestures { centroid, pan, zoom, _ ->
                     val oldScale = scale
-                    val newScale = (oldScale * zoom).coerceIn(1f, 5f)
+                    val newScale = (oldScale * zoom).coerceIn(1f, MAX_SCALE)
                     val previousCentroid = centroid - pan
                     val imagePoint = (previousCentroid - offset) / oldScale
                     offset = centroid - imagePoint * newScale
                     scale = newScale
+                    offset = clampOffsetToFrame(
+                        offset, scale, containerSize.width, containerSize.height,
+                        uiState.imageWidth, uiState.imageHeight,
+                    )
                 }
             }
             .pointerInput(uiState.bgRemovalMode, uiState.isProcessing, uiState.isSegmenting) {
