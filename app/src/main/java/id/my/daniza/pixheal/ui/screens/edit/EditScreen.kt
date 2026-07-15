@@ -233,7 +233,7 @@ fun EditScreen(
                 EditTool.OBJ_REMOVAL -> ObjRemovalContent(viewModel = viewModel, uiState = uiState)
                 EditTool.BASIC_EDIT -> BasicEditContent(viewModel = viewModel, uiState = uiState)
                 EditTool.BG_REMOVAL -> BgRemovalContent(viewModel = viewModel, uiState = uiState)
-                else -> EnhancerContent(viewModel = viewModel, uiState = uiState)
+                EditTool.EXPORT -> ExportContent(viewModel = viewModel, uiState = uiState)
             }
 
             uiState.error?.let { error ->
