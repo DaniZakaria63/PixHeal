@@ -1,13 +1,24 @@
 package id.my.daniza.pixheal.ui.screens.edit
 
+import android.content.ContentValues
+import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Bitmap.CompressFormat
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.core.net.toUri
+import androidx.core.graphics.createBitmap
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import id.my.daniza.local.ProjectHandler
 import id.my.daniza.local.ProjectRepository
 import id.my.daniza.modelpull.DownloadState
@@ -39,13 +50,13 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.io.FileOutputStream
 import javax.inject.Inject
-import androidx.core.net.toUri
-import androidx.core.graphics.createBitmap
 
 @HiltViewModel
 class EditViewModel @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     private val projectHandler: ProjectHandler,
     private val editingStateManager: EditingStateManager,
     private val projectRepository: ProjectRepository,
@@ -873,6 +884,148 @@ class EditViewModel @Inject constructor(
         segmentationCache = null
         _uiState.value.segmentationOverlay?.recycle()
         _uiState.update { it.copy(segmentationOverlay = null, error = null) }
+    }
+
+    // ── Export ─────────────────────────────────────────────────────────
+
+    fun setExportFormat(format: CompressFormat) {
+        _uiState.update { it.copy(exportFormat = format, exportCompleted = false, error = null) }
+    }
+
+    fun setExportQuality(quality: Int) {
+        _uiState.update { it.copy(exportQuality = quality, exportCompleted = false, error = null) }
+    }
+
+    fun saveToGallery() {
+        val format = _uiState.value.exportFormat
+        val quality = _uiState.value.exportQuality
+        val imageFile = projectHandler.imageFile()
+        if (!imageFile.exists()) {
+            _uiState.update { it.copy(error = "No image to export") }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(exportInProgress = true, error = null, exportCompleted = false) }
+
+            val result = withContext(Dispatchers.IO) {
+                try {
+                    val bitmap = BitmapFactory.decodeFile(imageFile.absolutePath)
+                        ?: return@withContext Result.failure<Uri>(Exception("Failed to decode image"))
+
+                    val mimeType = if (format == CompressFormat.PNG) "image/png" else "image/jpeg"
+                    val extension = if (format == CompressFormat.PNG) "png" else "jpg"
+                    val filename = "PixHeal_${System.currentTimeMillis()}.$extension"
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        val values = ContentValues().apply {
+                            put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+                            put(MediaStore.Images.Media.MIME_TYPE, mimeType)
+                            put(MediaStore.Images.Media.IS_PENDING, 1)
+                            put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/PixHeal")
+                        }
+                        val uri = appContext.contentResolver.insert(
+                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values
+                        ) ?: return@withContext Result.failure<Uri>(Exception("Failed to create MediaStore entry"))
+
+                        appContext.contentResolver.openOutputStream(uri)?.use { out ->
+                            bitmap.compress(format, quality, out)
+                        } ?: return@withContext Result.failure<Uri>(Exception("Failed to open output stream"))
+
+                        values.clear()
+                        values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                        appContext.contentResolver.update(uri, values, null, null)
+
+                        bitmap.recycle()
+                        Result.success(uri)
+                    } else {
+                        val dir = Environment.getExternalStoragePublicDirectory(
+                            Environment.DIRECTORY_PICTURES
+                        )
+                        val pixHealDir = File(dir, "PixHeal")
+                        pixHealDir.mkdirs()
+                        val dest = File(pixHealDir, filename)
+
+                        FileOutputStream(dest).use { out ->
+                            bitmap.compress(format, quality, out)
+                        }
+
+                        val uri = Uri.fromFile(dest)
+                        MediaStore.Images.Media.insertImage(
+                            appContext.contentResolver, dest.absolutePath, filename, null
+                        )
+
+                        bitmap.recycle()
+                        Result.success(uri)
+                    }
+                } catch (e: Exception) {
+                    Result.failure<Uri>(e)
+                }
+            }
+
+            result.fold(
+                onSuccess = { uri ->
+                    _uiState.update {
+                        it.copy(exportInProgress = false, exportCompleted = true, exportSavedUri = uri, error = null)
+                    }
+                },
+                onFailure = { e ->
+                    _uiState.update {
+                        it.copy(exportInProgress = false, error = "Failed to save: ${e.message}")
+                    }
+                },
+            )
+        }
+    }
+
+    fun shareImage() {
+        val imageFile = projectHandler.imageFile()
+        if (!imageFile.exists()) {
+            _uiState.update { it.copy(error = "No image to share") }
+            return
+        }
+
+        val format = _uiState.value.exportFormat
+        val quality = _uiState.value.exportQuality
+        val mimeType = if (format == CompressFormat.PNG) "image/png" else "image/jpeg"
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(exportInProgress = true, error = null) }
+
+            try {
+                withContext(Dispatchers.IO) {
+                    val bitmap = BitmapFactory.decodeFile(imageFile.absolutePath)
+                        ?: throw Exception("Failed to decode image")
+
+                    val extension = if (format == CompressFormat.PNG) "png" else "jpg"
+                    val shareFile = File(appContext.cacheDir, "share_${System.currentTimeMillis()}.$extension")
+                    FileOutputStream(shareFile).use { out ->
+                        bitmap.compress(format, quality, out)
+                    }
+                    bitmap.recycle()
+
+                    val shareUri = FileProvider.getUriForFile(
+                        appContext,
+                        "${appContext.packageName}.fileprovider",
+                        shareFile,
+                    )
+
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = mimeType
+                        putExtra(Intent.EXTRA_STREAM, shareUri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+
+                    appContext.startActivity(Intent.createChooser(intent, "Share image"))
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(error = "Failed to share: ${e.message}")
+                }
+            } finally {
+                _uiState.update { it.copy(exportInProgress = false) }
+            }
+        }
     }
 
     private fun imageFileUri(): Uri {

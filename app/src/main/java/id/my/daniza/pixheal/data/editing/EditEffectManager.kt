@@ -490,7 +490,7 @@ class EditEffectManager @Inject constructor(
                     LoadedModel.ESRGAN -> litertBridge.loadModel("esrgan/real_esrgan_x4plus.tflite")
                     LoadedModel.AOTGAN -> {
                         val (isValid, file) = isAotganModelDownloaded()
-                        if (isValid) return "AOT-GAN model file not found"
+                        if (!isValid) return "AOT-GAN model file not found"
                         litertBridge.loadModelFromFile(file)
                     }
                     LoadedModel.NONE -> return null
