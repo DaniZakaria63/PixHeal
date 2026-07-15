@@ -25,6 +25,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import kotlinx.coroutines.launch
 
+
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
@@ -46,7 +49,7 @@ fun HomeScreen(
 ) {
     var searchQuery by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
-    var corruptDialog by remember { mutableStateOf<Pair<Long, List<String>>?>(null) }
+    val corruptProject by viewModel.corruptProject.collectAsState()
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -59,35 +62,17 @@ fun HomeScreen(
         }
     }
 
-    corruptDialog?.let { (projectId, reasons) ->
-        AlertDialog(
-            onDismissRequest = { corruptDialog = null },
-            title = { Text("Corrupt Project") },
-            text = {
-                Column {
-                    Text("This project cannot be opened:")
-                    reasons.forEach { reason ->
-                        Text(
-                            "• $reason",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    viewModel.deleteProject(projectId)
-                    corruptDialog = null
-                }) {
-                    Text("Delete")
-                }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { corruptDialog = null }) {
-                    Text("Cancel")
-                }
-            }
+    when (val state = corruptProject) {
+        null -> {}
+        is CorruptProjectState.Corrupt -> CorruptProjectDialog(
+            reasons = state.reasons,
+            onDelete = { viewModel.deleteCorruptProject() },
+            onDismiss = { viewModel.dismissCorruptDialog() },
+        )
+        is CorruptProjectState.Valid -> ValidProjectNavigation(
+            projectId = state.projectId,
+            onNavigateToEdit = onNavigateToEdit,
+            onNavigated = { viewModel.dismissCorruptDialog() },
         )
     }
 
@@ -174,12 +159,7 @@ fun HomeScreen(
 
             PreviousProjectsSection(
                 onProjectClick = { projectId ->
-                    viewModel.openProject(projectId) { result ->
-                        when (result) {
-                            is IntegrityResult.Valid -> onNavigateToEdit(projectId)
-                            is IntegrityResult.Corrupt -> corruptDialog = result.projectId to result.reasons
-                        }
-                    }
+                    viewModel.openProject(projectId)
                 },
                 onProjectDelete = { projectId ->
                     viewModel.deleteProject(projectId)
@@ -190,3 +170,50 @@ fun HomeScreen(
         }
     }
 }
+
+@Composable
+private fun CorruptProjectDialog(
+    reasons: List<String>,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Corrupt Project") },
+        text = {
+            Column {
+                Text("This project cannot be opened:")
+                reasons.forEach { reason ->
+                    Text(
+                        "• $reason",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDelete) {
+                Text("Delete")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun ValidProjectNavigation(
+    projectId: Long,
+    onNavigateToEdit: (Long) -> Unit,
+    onNavigated: () -> Unit,
+) {
+    LaunchedEffect(projectId) {
+        onNavigateToEdit(projectId)
+        onNavigated()
+    }
+}
+

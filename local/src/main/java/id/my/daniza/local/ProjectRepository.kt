@@ -80,6 +80,7 @@ class ProjectRepository @Inject constructor(
             if (sourceUri == null) reasons.add("Source image URI is malformed")
         }
 
+        projectHandler.openProject(projectId)
         val hasStaleFile = projectHandler.editStateFile().exists()
         if (!hasStaleFile) {
             reasons.add("Editing state file is missing")
