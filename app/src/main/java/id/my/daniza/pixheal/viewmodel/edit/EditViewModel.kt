@@ -1,4 +1,4 @@
-package id.my.daniza.pixheal.ui.screens.edit
+package id.my.daniza.pixheal.viewmodel.edit
 
 import android.content.ContentValues
 import android.content.Context

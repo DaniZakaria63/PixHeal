@@ -39,6 +39,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import id.my.daniza.pixheal.viewmodel.home.CorruptProjectState
+import id.my.daniza.pixheal.viewmodel.home.HomeViewModel
 import kotlinx.coroutines.launch
 
 

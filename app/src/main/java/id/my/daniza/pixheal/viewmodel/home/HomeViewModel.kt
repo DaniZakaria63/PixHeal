@@ -1,4 +1,4 @@
-package id.my.daniza.pixheal.ui.screens.home
+package id.my.daniza.pixheal.viewmodel.home
 
 import android.net.Uri
 import androidx.lifecycle.ViewModel

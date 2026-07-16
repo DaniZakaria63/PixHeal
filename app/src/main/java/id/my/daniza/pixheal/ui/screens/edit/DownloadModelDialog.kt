@@ -16,6 +16,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import id.my.daniza.pixheal.viewmodel.edit.EditViewModel
 import androidx.compose.ui.unit.dp
 
 @Composable

@@ -40,6 +40,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import id.my.daniza.pixheal.data.ui.EditUiState
+import id.my.daniza.pixheal.viewmodel.edit.EditViewModel
 
 @Composable
 internal fun ColumnScope.ExportContent(viewModel: EditViewModel, uiState: EditUiState) {
