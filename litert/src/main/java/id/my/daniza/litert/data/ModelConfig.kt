@@ -1,7 +1,16 @@
 package id.my.daniza.litert.data
 
+/** Tensor element type for a model's output buffer. */
 enum class TensorDataType { FLOAT32, UINT8 }
 
+/**
+ * Static description of a model's expected I/O tensor layout.
+ *
+ * This is the single source of truth for input/output dimensions and output dtype,
+ * passed into [LitertBridge.createWorkerSession] and carried by [LitertBridge.ModelSession]
+ * so handlers never hardcode sizes. [inputPixels]/[outputPixels] are convenience
+ * accessors for buffer allocation.
+ */
 data class ModelConfig(
     val inputWidth: Int,
     val inputHeight: Int,

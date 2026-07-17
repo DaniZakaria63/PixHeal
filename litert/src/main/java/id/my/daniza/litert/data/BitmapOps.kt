@@ -4,6 +4,18 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.core.graphics.scale
 
+/**
+ * Bitmap and tensor-buffer conversion helpers shared by all model handlers.
+ *
+ * Pure host-side utilities — no model dependency. Provides:
+ * - [scaleToFit] / [padBitmap]: aspect-preserving resize helpers.
+ * - pixel <-> raw array conversions for [CompiledModel] [TensorBuffer] I/O:
+ *   [pixelsToUint8] (RGB bytes, 0-255), [pixelsToFloat] (RGB floats, 0-1),
+ *   [floatToBitmap] / [byteToBitmap] (raw arrays -> ARGB_8888 Bitmap).
+ *
+ * [MODE_FAST]/[MODE_QUALITY] are the target longest-side sizes used by the
+ * super-resolution handler before tiling.
+ */
 object BitmapOps {
     const val MODE_FAST = 128
     const val MODE_QUALITY = 256

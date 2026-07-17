@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import androidx.core.graphics.scale
 import id.my.daniza.litert.data.BitmapOps
 import id.my.daniza.litert.LitertBridge
+import id.my.daniza.litert.data.ModelConfig
 import id.my.daniza.litert.data.TensorDataType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -13,21 +14,51 @@ import timber.log.Timber
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.ceil
 
+/**
+ * MIGAN (AOT-GAN) inpainting handler.
+ *
+ * ## What it does
+ * Fills masked-out regions of an image. The image is scaled (aspect preserved) to fit
+ * [ModelConfig.AOTGAN_DEFAULT.inputWidth] (512px) on its longest side. The user mask is
+ * resized to match, then inverted ([invertMask]) so masked pixels become 0 and known
+ * pixels become 255. The model is fed a 4-channel input per tile:
+ *   - channel 0: (maskGray - 0.5)
+ *   - channels 1-3: (pixel/127.5 - 1) * maskGray   (RGB, masked + normalized to [-1, 1])
+ * Tiles of [ModelConfig.AOTGAN_DEFAULT.inputWidth]x[ModelConfig.AOTGAN_DEFAULT.inputHeight]
+ * (512x512) run independently, then are blended back with overlap-weighted averaging.
+ * The result is scaled back to the original image dimensions before returning.
+ *
+ * ## Concurrency
+ * Tiles run in parallel on [Dispatchers.Default] limited to [LitertBridge.ModelSession.parallelism]
+ * threads (identical strategy to [EsrganHandler]). A shared [AtomicInteger] drives [progress].
+ *
+ * ## I/O buffers
+ * - Input:  FLOAT32, 4 channels = [inputWidth]x[inputHeight]x4 floats
+ *           (built in [prepareInput], written via [BitmapOps.pixelsToFloat] pre-pack).
+ * - Output: [ModelConfig.AOTGAN_DEFAULT.outputWidth]x[ModelConfig.AOTGAN_DEFAULT.outputHeight]x3
+ *   (512x512x3). Read as FLOAT32 (config [id.my.daniza.litert.data.TensorDataType.FLOAT32]),
+ *   denormalized ((x + 1) * 127.5) and converted via [BitmapOps.floatToBitmap].
+ *
+ * ## Notes
+ * The mask is inverted because the model expects known regions to be preserved (mask=1)
+ * and holes to be filled (mask=0). Final compositing with the original image is done
+ * outside this handler, in EditEffectManager.blendResult.
+ */
 object MiganHandler {
 
     suspend fun run(
-        session: LitertBridge.ModelSession,
+        bridge: LitertBridge,
         imageBitmap: Bitmap,
         maskBitmap: Bitmap,
         progress: ((Int, Int) -> Unit)? = null,
     ): Bitmap? = coroutineScope {
-        val tileSize = session.config.inputWidth
+        val tileSize = ModelConfig.AOTGAN_DEFAULT.inputWidth
         Timber.i(
             "MiganHandler: model in=%dx%d out=%dx%d",
-            session.config.inputWidth,
-            session.config.inputHeight,
-            session.config.outputWidth,
-            session.config.outputHeight
+            ModelConfig.AOTGAN_DEFAULT.inputWidth,
+            ModelConfig.AOTGAN_DEFAULT.inputHeight,
+            ModelConfig.AOTGAN_DEFAULT.outputWidth,
+            ModelConfig.AOTGAN_DEFAULT.outputHeight
         )
 
         val origW = imageBitmap.width
@@ -66,7 +97,7 @@ object MiganHandler {
         val weight = IntArray(w * h)
         val completed = AtomicInteger(0)
 
-        val dispatcher = Dispatchers.Default.limitedParallelism(session.parallelism)
+        val dispatcher = Dispatchers.Default.limitedParallelism(bridge.parallelism)
 
         val tileList = (0 until tilesY).flatMap { ty ->
             (0 until tilesX).map { tx -> Pair(tx, ty) }
@@ -80,7 +111,7 @@ object MiganHandler {
                 val imgTile = Bitmap.createBitmap(image, offX, offY, tileSize, tileSize)
                 val maskTile = Bitmap.createBitmap(invMask, offX, offY, tileSize, tileSize)
 
-                val outTile = inferTile(session, imgTile, maskTile)
+                val outTile = inferTile(bridge, imgTile, maskTile)
                 imgTile.recycle()
                 maskTile.recycle()
 
@@ -134,20 +165,27 @@ object MiganHandler {
         upscaled
     }
 
-    private fun inferTile(session: LitertBridge.ModelSession, imgTile: Bitmap, maskTile: Bitmap): Bitmap {
+    private fun inferTile(bridge: LitertBridge, imgTile: Bitmap, maskTile: Bitmap): Bitmap {
         val inputData = prepareInput(imgTile, maskTile)
-        val input = session.model.createInputBuffers().first()
-        val outBuf = session.model.createOutputBuffers().first()
+        // Each tile gets its own CompiledModel instance — see EsrganHandler.inferTile
+        // for why LiteRT models cannot be shared across parallel worker threads.
+        val session = bridge.createWorkerSession(ModelConfig.AOTGAN_DEFAULT)
         try {
-            input.writeFloat(inputData)
-            session.model.run(listOf(input), listOf(outBuf))
-            return when (session.config.outputType) {
-                TensorDataType.FLOAT32 -> BitmapOps.floatToBitmap(outBuf.readFloat(), session.config.outputWidth, session.config.outputHeight)
-                TensorDataType.UINT8 -> BitmapOps.byteToBitmap(outBuf.readInt8(), session.config.outputWidth, session.config.outputHeight)
+            val input = session.model.createInputBuffers().first()
+            val outBuf = session.model.createOutputBuffers().first()
+            try {
+                input.writeFloat(inputData)
+                session.model.run(listOf(input), listOf(outBuf))
+                return when (session.config.outputType) {
+                    TensorDataType.FLOAT32 -> BitmapOps.floatToBitmap(outBuf.readFloat(), session.config.outputWidth, session.config.outputHeight)
+                    TensorDataType.UINT8 -> BitmapOps.byteToBitmap(outBuf.readInt8(), session.config.outputWidth, session.config.outputHeight)
+                }
+            } finally {
+                input.close()
+                outBuf.close()
             }
         } finally {
-            input.close()
-            outBuf.close()
+            session.close()
         }
     }
 
