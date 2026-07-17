@@ -21,8 +21,6 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import id.my.daniza.local.ProjectHandler
 import id.my.daniza.local.ProjectRepository
-import id.my.daniza.modelpull.DownloadState
-import id.my.daniza.modelpull.ModelDownloadRepository
 import id.my.daniza.pixheal.data.editing.EditEffectManager
 import id.my.daniza.pixheal.data.editing.EditStep
 import id.my.daniza.pixheal.data.editing.EditType
@@ -61,14 +59,10 @@ class EditViewModel @Inject constructor(
     private val editingStateManager: EditingStateManager,
     private val projectRepository: ProjectRepository,
     private val editEffectManager: EditEffectManager,
-    private val modelDownloadRepository: ModelDownloadRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(EditUiState())
     val uiState: StateFlow<EditUiState> = _uiState.asStateFlow()
-
-    val downloadState: StateFlow<DownloadState> = modelDownloadRepository.downloadState
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(), DownloadState())
 
     private var adjustPreviewJob: Job? = null
 
@@ -111,7 +105,9 @@ class EditViewModel @Inject constructor(
     fun selectTool(tool: EditTool) {
         _uiState.update { it.copy(selectedTool = tool) }
         if (tool == EditTool.OBJ_REMOVAL) {
-            checkModelAvailability()
+            loadImageDims()
+            initMaskBitmap()
+            _uiState.update { it.copy(showDrawGuide = true) }
         } else if (tool == EditTool.BASIC_EDIT) {
             loadImageDims()
             if (_uiState.value.basicValues != BasicAdjustValues()) {
@@ -134,37 +130,7 @@ class EditViewModel @Inject constructor(
         }
     }
 
-    // ── Model download ─────────────────────────────────────────────────
-
-    private fun checkModelAvailability() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isCheckingModel = true) }
-            val (available) = editEffectManager.isAotganModelDownloaded()
-
-            _uiState.update {
-                it.copy(
-                    isCheckingModel = false,
-                    modelAvailable = available,
-                    showDrawGuide = !available,
-                )
-            }
-
-            if (available) initMaskBitmap() else triggerModelDownload()
-        }
-    }
-
-    fun triggerModelDownload() {
-        _uiState.update { it.copy(showDownloadDialog = true) }
-        viewModelScope.launch {
-            val result = modelDownloadRepository.downloadAotganModel()
-            if (result != null) {
-                _uiState.update {
-                    it.copy(modelAvailable = true, showDrawGuide = true)
-                }
-                initMaskBitmap()
-            }
-        }
-    }
+    // ── Mask drawing ───────────────────────────────────────────────────
 
     private fun initMaskBitmap() {
         viewModelScope.launch {
@@ -178,10 +144,6 @@ class EditViewModel @Inject constructor(
                 }
             }
         }
-    }
-
-    fun dismissDownloadDialog() {
-        _uiState.update { it.copy(showDownloadDialog = false) }
     }
 
     fun dismissDrawGuide() {
@@ -1043,10 +1005,6 @@ class EditViewModel @Inject constructor(
         _uiState.update {
             it.copy(qualityMode = !it.qualityMode)
         }
-    }
-
-    fun cancelDownload() {
-        modelDownloadRepository.cancelDownload()
     }
 
     override fun onCleared() {

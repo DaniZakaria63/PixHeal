@@ -205,6 +205,8 @@ class LitertBridge @Inject constructor(
 
         val maskScaled = maskBitmap.scale(w, h, false)
 
+        val invMask = invertMask(maskScaled)
+
         val tilesX = ceil(w.toFloat() / tileSize).toInt()
         val tilesY = ceil(h.toFloat() / tileSize).toInt()
         val spacingX = if (tilesX > 1) (w - tileSize).toFloat() / (tilesX - 1) else 0f
@@ -225,9 +227,9 @@ class LitertBridge @Inject constructor(
                     val offY = (ty * spacingY).toInt().coerceAtMost(h - tileSize)
 
                     val imgTile = Bitmap.createBitmap(image, offX, offY, tileSize, tileSize)
-                    val maskTile = Bitmap.createBitmap(maskScaled, offX, offY, tileSize, tileSize)
+                    val maskTile = Bitmap.createBitmap(invMask, offX, offY, tileSize, tileSize)
 
-                    val outTile = inferInpaintingTile(interpreter, imgTile, maskTile)
+                    val outTile = miganInferTile(interpreter, imgTile, maskTile)
                     imgTile.recycle()
                     maskTile.recycle()
 
@@ -257,6 +259,7 @@ class LitertBridge @Inject constructor(
             interpreter.close()
         }
         maskScaled.recycle()
+        invMask.recycle()
         if (image !== imageBitmap) image.recycle()
 
         val stitched = IntArray(w * h)
@@ -368,37 +371,68 @@ class LitertBridge @Inject constructor(
         }
     }
 
-    private fun inferInpaintingTile(interp: Interpreter, imgTile: Bitmap, maskTile: Bitmap): Bitmap {
-        val imageInput: Any
-        val maskInput: Any
-        if (useFloatInput) {
-            imageInput = pixelsToFloatBuffer(imgTile)
-            maskInput = maskToFloatBuffer(maskTile)
-        } else {
-            imageInput = pixelsToUint8Buffer(imgTile)
-            maskInput = maskToUint8Buffer(maskTile)
+    private fun miganInferTile(interp: Interpreter, imgTile: Bitmap, maskTile: Bitmap): Bitmap {
+        val input = prepareMiganInput(imgTile, maskTile)
+        val output = ByteBuffer.allocateDirect(outputWidth * outputHeight * 3 * 4)
+            .order(ByteOrder.nativeOrder())
+        interp.run(input, output)
+        output.rewind()
+        val floats = FloatArray(outputWidth * outputHeight * 3)
+        for (i in floats.indices) floats[i] = output.float
+        return miganFloatsToBitmap(floats)
+    }
+
+    private fun invertMask(mask: Bitmap): Bitmap {
+        val w = mask.width
+        val h = mask.height
+        val pixels = IntArray(w * h)
+        mask.getPixels(pixels, 0, w, 0, 0, w, h)
+        for (i in pixels.indices) {
+            val gray = ((pixels[i] shr 16) and 0xFF).coerceIn(0, 255)
+            val inv = 255 - gray
+            pixels[i] = (0xFF shl 24) or (inv shl 16) or (inv shl 8) or inv
         }
-        val dtype = interp.getOutputTensor(0).dataType()
-        return when (dtype) {
-            org.tensorflow.lite.DataType.FLOAT32 -> {
-                val output = ByteBuffer.allocateDirect(outputWidth * outputHeight * 3 * 4)
-                    .order(ByteOrder.nativeOrder())
-                interp.runForMultipleInputsOutputs(arrayOf(imageInput, maskInput), mapOf(0 to output))
-                output.rewind()
-                val floats = FloatArray(outputWidth * outputHeight * 3)
-                for (i in floats.indices) floats[i] = output.float
-                floatsToBitmap(floats)
-            }
-            org.tensorflow.lite.DataType.UINT8 -> {
-                val output = ByteBuffer.allocateDirect(outputWidth * outputHeight * 3)
-                interp.runForMultipleInputsOutputs(arrayOf(imageInput, maskInput), mapOf(0 to output))
-                output.rewind()
-                val bytes = ByteArray(outputWidth * outputHeight * 3)
-                output.get(bytes)
-                bytesToBitmap(bytes)
-            }
-            else -> throw IllegalStateException("Unsupported output dtype: $dtype")
+        return Bitmap.createBitmap(pixels, w, h, Bitmap.Config.ARGB_8888)
+    }
+
+    private fun prepareMiganInput(imgTile: Bitmap, maskTile: Bitmap): ByteBuffer {
+        val w = imgTile.width
+        val h = imgTile.height
+        val pixels = IntArray(w * h)
+        imgTile.getPixels(pixels, 0, w, 0, 0, w, h)
+
+        val maskPixels = IntArray(w * h)
+        maskTile.getPixels(maskPixels, 0, w, 0, 0, w, h)
+
+        val buffer = ByteBuffer.allocateDirect(1 * 4 * w * h * 4)
+            .order(ByteOrder.nativeOrder())
+
+        for (i in 0 until w * h) {
+            val p = pixels[i]
+            val r = ((p shr 16) and 0xFF) / 127.5f - 1f
+            val g = ((p shr 8) and 0xFF) / 127.5f - 1f
+            val b = (p and 0xFF) / 127.5f - 1f
+
+            val maskGray = ((maskPixels[i] shr 16) and 0xFF) / 255f
+
+            buffer.putFloat(maskGray - 0.5f)
+            buffer.putFloat(r * maskGray)
+            buffer.putFloat(g * maskGray)
+            buffer.putFloat(b * maskGray)
         }
+        buffer.rewind()
+        return buffer
+    }
+
+    private fun miganFloatsToBitmap(data: FloatArray): Bitmap {
+        val pixels = IntArray(outputWidth * outputHeight)
+        for (i in pixels.indices) {
+            val r = ((data[i * 3 + 0] + 1f) * 127.5f).toInt().coerceIn(0, 255)
+            val g = ((data[i * 3 + 1] + 1f) * 127.5f).toInt().coerceIn(0, 255)
+            val b = ((data[i * 3 + 2] + 1f) * 127.5f).toInt().coerceIn(0, 255)
+            pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        }
+        return Bitmap.createBitmap(pixels, outputWidth, outputHeight, Bitmap.Config.ARGB_8888)
     }
 
     private fun pixelsToUint8Buffer(bitmap: Bitmap): ByteBuffer {
@@ -416,22 +450,6 @@ class LitertBridge @Inject constructor(
         return buffer
     }
 
-    private fun maskToUint8Buffer(bitmap: Bitmap): ByteBuffer {
-        val w = bitmap.width
-        val h = bitmap.height
-        val pixels = IntArray(w * h)
-        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
-        val buffer = ByteBuffer.allocateDirect(w * h).order(ByteOrder.nativeOrder())
-        for (p in pixels) {
-            val gray = ((p shr 16) and 0xFF) * 0.299f +
-                       ((p shr 8) and 0xFF) * 0.587f +
-                       (p and 0xFF) * 0.114f
-            buffer.put(gray.toInt().coerceIn(0, 255).toByte())
-        }
-        buffer.rewind()
-        return buffer
-    }
-
     private fun pixelsToFloatBuffer(bitmap: Bitmap): ByteBuffer {
         val w = bitmap.width
         val h = bitmap.height
@@ -442,22 +460,6 @@ class LitertBridge @Inject constructor(
             buffer.putFloat(((p shr 16) and 0xFF) / 255f)
             buffer.putFloat(((p shr 8) and 0xFF) / 255f)
             buffer.putFloat((p and 0xFF) / 255f)
-        }
-        buffer.rewind()
-        return buffer
-    }
-
-    private fun maskToFloatBuffer(bitmap: Bitmap): ByteBuffer {
-        val w = bitmap.width
-        val h = bitmap.height
-        val pixels = IntArray(w * h)
-        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
-        val buffer = ByteBuffer.allocateDirect(w * h * 4).order(ByteOrder.nativeOrder())
-        for (p in pixels) {
-            val gray = ((p shr 16) and 0xFF) * 0.299f +
-                       ((p shr 8) and 0xFF) * 0.587f +
-                       (p and 0xFF) * 0.114f
-            buffer.putFloat(gray / 255f)
         }
         buffer.rewind()
         return buffer
