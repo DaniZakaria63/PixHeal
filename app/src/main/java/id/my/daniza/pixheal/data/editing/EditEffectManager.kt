@@ -9,6 +9,7 @@ import android.graphics.Matrix
 import android.net.Uri
 import dagger.hilt.android.qualifiers.ApplicationContext
 import id.my.daniza.litert.LitertBridge
+import id.my.daniza.litert.data.BitmapOps
 import id.my.daniza.pixheal.data.ui.BasicAdjustValues
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -34,7 +35,7 @@ class EditEffectManager @Inject constructor(
     private enum class LoadedModel { NONE, ESRGAN, AOTGAN, DEEPLABV3 }
 
     suspend fun enhance(uri: Uri, qualityMode: Boolean = false): EffectResult = withContext(Dispatchers.IO) {
-        val scaleTarget = if (qualityMode) LitertBridge.MODE_QUALITY else LitertBridge.MODE_FAST
+        val scaleTarget = if (qualityMode) BitmapOps.MODE_QUALITY else BitmapOps.MODE_FAST
         Timber.i("enhance: %s mode (target=%d)", if (qualityMode) "quality" else "fast", scaleTarget)
         val start = System.currentTimeMillis()
 

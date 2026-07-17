@@ -1,42 +1,45 @@
-package id.my.daniza.litert
+package id.my.daniza.litert.handler
 
 import android.graphics.Bitmap
+import id.my.daniza.litert.data.BitmapOps
+import id.my.daniza.litert.LitertBridge
+import id.my.daniza.litert.data.TensorDataType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import org.tensorflow.lite.Interpreter
 import timber.log.Timber
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.ceil
 
 object EsrganHandler {
-    private const val INPUT_SIZE = 128
     private const val UPSCALE = 4
 
     suspend fun run(
-        bridge: LitertBridge,
+        session: LitertBridge.ModelSession,
         bitmap: Bitmap,
-        scaleTarget: Int = LitertBridge.MODE_FAST,
+        scaleTarget: Int = BitmapOps.MODE_FAST,
         progress: ((Int, Int) -> Unit)? = null,
     ): Bitmap? = coroutineScope {
-        val bytes = bridge.modelBytes ?: return@coroutineScope null
+        val inputSize = session.config.inputWidth
         Timber.i("EsrganHandler: input %dx%d, target=%d", bitmap.width, bitmap.height, scaleTarget)
 
-        val (scaled, scaledW, scaledH) = LitertBridge.scaleToFit(bitmap, scaleTarget)
+        val (scaled, scaledW, scaledH) = BitmapOps.scaleToFit(bitmap, scaleTarget)
         Timber.i("EsrganHandler: scaled to %dx%d", scaledW, scaledH)
 
-        val interpreter = bridge.makeInterpreter()
-        val shape = interpreter.getOutputTensor(0).shape()
-        Timber.i("EsrganHandler: model output shape=%s", shape.contentToString())
-        interpreter.close()
-
-        val tilesX = ceil(scaledW.toFloat() / INPUT_SIZE).toInt()
-        val tilesY = ceil(scaledH.toFloat() / INPUT_SIZE).toInt()
-        val spacingX = if (tilesX > 1) (scaledW - INPUT_SIZE).toFloat() / (tilesX - 1) else 0f
-        val spacingY = if (tilesY > 1) (scaledH - INPUT_SIZE).toFloat() / (tilesY - 1) else 0f
+        val tilesX = ceil(scaledW.toFloat() / inputSize).toInt()
+        val tilesY = ceil(scaledH.toFloat() / inputSize).toInt()
+        val spacingX = if (tilesX > 1) (scaledW - inputSize).toFloat() / (tilesX - 1) else 0f
+        val spacingY = if (tilesY > 1) (scaledH - inputSize).toFloat() / (tilesY - 1) else 0f
         val totalTiles = tilesX * tilesY
-        Timber.i("EsrganHandler: %dx%d tiles (%d), spacing %.1fx%.1f", tilesX, tilesY, totalTiles, spacingX, spacingY)
+        Timber.i(
+            "EsrganHandler: %dx%d tiles (%d), spacing %.1fx%.1f",
+            tilesX,
+            tilesY,
+            totalTiles,
+            spacingX,
+            spacingY
+        )
 
         val finalW = scaledW * UPSCALE
         val finalH = scaledH * UPSCALE
@@ -47,7 +50,7 @@ object EsrganHandler {
         val weight = IntArray(finalW * finalH)
         val completed = AtomicInteger(0)
 
-        val dispatcher = Dispatchers.Default.limitedParallelism(bridge.parallelism)
+        val dispatcher = Dispatchers.Default.limitedParallelism(session.parallelism)
 
         val tileList = (0 until tilesY).flatMap { ty ->
             (0 until tilesX).map { tx -> Pair(tx, ty) }
@@ -55,18 +58,12 @@ object EsrganHandler {
 
         val results = tileList.map { (tx, ty) ->
             async(dispatcher) {
-                val offX = (tx * spacingX).toInt().coerceAtMost(scaledW - INPUT_SIZE)
-                val offY = (ty * spacingY).toInt().coerceAtMost(scaledH - INPUT_SIZE)
+                val offX = (tx * spacingX).toInt().coerceAtMost(scaledW - inputSize)
+                val offY = (ty * spacingY).toInt().coerceAtMost(scaledH - inputSize)
 
-                val tile = Bitmap.createBitmap(scaled, offX, offY, INPUT_SIZE, INPUT_SIZE)
+                val tile = Bitmap.createBitmap(scaled, offX, offY, inputSize, inputSize)
 
-                lateinit var outTile: Bitmap
-                val local = bridge.makeInterpreter()
-                try {
-                    outTile = inferTile(local, tile)
-                } finally {
-                    local.close()
-                }
+                val outTile = inferTile(session, tile)
                 tile.recycle()
 
                 val done = completed.incrementAndGet()
@@ -115,32 +112,19 @@ object EsrganHandler {
         Bitmap.createBitmap(stitched, finalW, finalH, Bitmap.Config.ARGB_8888)
     }
 
-    private fun inferTile(interp: Interpreter, tile: Bitmap): Bitmap {
-        val input = LitertBridge.pixelsToUint8Buffer(tile)
-        val shape = interp.getOutputTensor(0).shape()
-        val isNchw = shape.size == 4 && shape[3] > 4
-        val outH = if (isNchw) shape[2] else shape[1]
-        val outW = if (isNchw) shape[3] else shape[2]
-        val dtype = interp.getOutputTensor(0).dataType()
-        return when (dtype) {
-            org.tensorflow.lite.DataType.FLOAT32 -> {
-                val output = java.nio.ByteBuffer.allocateDirect(outW * outH * 3 * 4)
-                    .order(java.nio.ByteOrder.nativeOrder())
-                interp.run(input, output)
-                output.rewind()
-                val floats = FloatArray(outW * outH * 3)
-                for (i in floats.indices) floats[i] = output.float
-                LitertBridge.floatsToBitmap(floats, outW, outH)
+    private fun inferTile(session: LitertBridge.ModelSession, tile: Bitmap): Bitmap {
+        val input = session.model.createInputBuffers().first()
+        val outBuf = session.model.createOutputBuffers().first()
+        try {
+            input.writeInt8(BitmapOps.pixelsToUint8(tile))
+            session.model.run(listOf(input), listOf(outBuf))
+            return when (session.config.outputType) {
+                TensorDataType.FLOAT32 -> BitmapOps.floatToBitmap(outBuf.readFloat(), session.config.outputWidth, session.config.outputHeight)
+                TensorDataType.UINT8 -> BitmapOps.byteToBitmap(outBuf.readInt8(), session.config.outputWidth, session.config.outputHeight)
             }
-            org.tensorflow.lite.DataType.UINT8 -> {
-                val output = java.nio.ByteBuffer.allocateDirect(outW * outH * 3)
-                interp.run(input, output)
-                output.rewind()
-                val bytes = ByteArray(outW * outH * 3)
-                output.get(bytes)
-                LitertBridge.bytesToBitmap(bytes, outW, outH)
-            }
-            else -> throw IllegalStateException("Unsupported output dtype: $dtype")
+        } finally {
+            input.close()
+            outBuf.close()
         }
     }
 
