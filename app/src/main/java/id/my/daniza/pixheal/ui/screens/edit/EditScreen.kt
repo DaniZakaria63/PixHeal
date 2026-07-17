@@ -108,12 +108,6 @@ fun EditScreen(
         viewModel.initProject(projectId)
     }
 
-    DownloadModelDialog(
-        showDialog = uiState.showDownloadDialog,
-        onDismiss = { viewModel.dismissDownloadDialog() },
-        viewModel = viewModel,
-    )
-
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
@@ -391,17 +385,6 @@ private fun ColumnScope.ObjRemovalContent(viewModel: EditViewModel, uiState: Edi
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
 
-    if (uiState.isCheckingModel) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("Checking model...", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        return
-    }
-
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -410,8 +393,8 @@ private fun ColumnScope.ObjRemovalContent(viewModel: EditViewModel, uiState: Edi
             .onGloballyPositioned { coordinates ->
                 containerSize = coordinates.size
             }
-            .pointerInput(uiState.modelAvailable) {
-                if (!uiState.modelAvailable) return@pointerInput
+            .pointerInput(uiState.isProcessing) {
+                if (uiState.isProcessing) return@pointerInput
                 detectTransformGestures { centroid, pan, zoom, _ ->
                     val oldScale = scale
                     val newScale = (oldScale * zoom).coerceIn(1f, MAX_SCALE)
@@ -425,8 +408,8 @@ private fun ColumnScope.ObjRemovalContent(viewModel: EditViewModel, uiState: Edi
                     )
                 }
             }
-            .pointerInput(uiState.modelAvailable, uiState.isProcessing) {
-                if (!uiState.modelAvailable || uiState.isProcessing) return@pointerInput
+            .pointerInput(uiState.isProcessing) {
+                if (uiState.isProcessing) return@pointerInput
                 val mask = uiState.maskBitmap ?: return@pointerInput
                 val imgW = mask.width
                 val imgH = mask.height
@@ -466,22 +449,7 @@ private fun ColumnScope.ObjRemovalContent(viewModel: EditViewModel, uiState: Edi
     ) {
         val imageUri = uiState.imageUri
 
-        if (!uiState.modelAvailable) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text("AOT-GAN model required", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Download the model to use object removal",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                FilledTonalButton(onClick = { viewModel.triggerModelDownload() }) {
-                    Text("Download Model")
-                }
-            }
-        } else if (imageUri != null) {
+        if (imageUri != null) {
             AsyncImage(
                 model = imageUri,
                 contentDescription = "Image",
@@ -527,89 +495,87 @@ private fun ColumnScope.ObjRemovalContent(viewModel: EditViewModel, uiState: Edi
 
     Spacer(modifier = Modifier.height(12.dp))
 
-    if (uiState.modelAvailable) {
-        if (uiState.showDrawGuide) {
-            Text(
-                "Draw on the object you want to remove",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
-            TextButton(onClick = { viewModel.dismissDrawGuide() }) {
-                Text("Got it", style = MaterialTheme.typography.labelSmall)
-            }
+    if (uiState.showDrawGuide) {
+        Text(
+            "Draw on the object you want to remove",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(horizontal = 12.dp),
+        )
+        TextButton(onClick = { viewModel.dismissDrawGuide() }) {
+            Text("Got it", style = MaterialTheme.typography.labelSmall)
         }
+    }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("Brush:", style = MaterialTheme.typography.labelSmall)
-            Slider(
-                value = uiState.brushRadius,
-                onValueChange = { viewModel.setBrushRadius(it) },
-                valueRange = 10f..100f,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                "${uiState.brushRadius.toInt()}px",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Brush:", style = MaterialTheme.typography.labelSmall)
+        Slider(
+            value = uiState.brushRadius,
+            onValueChange = { viewModel.setBrushRadius(it) },
+            valueRange = 10f..100f,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            "${uiState.brushRadius.toInt()}px",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 
-        if (uiState.isProcessing) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(12.dp),
-            ) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                Text("Removing object...", style = MaterialTheme.typography.bodySmall)
-            }
-        }
-
+    if (uiState.isProcessing) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(12.dp),
         ) {
-            IconButton(
-                onClick = { viewModel.clearMask() },
-                enabled = !uiState.isProcessing,
-            ) {
-                Icon(
-                    Icons.Filled.Delete,
-                    contentDescription = "Clear mask",
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-            Text(
-                "Clear mask",
-                style = MaterialTheme.typography.labelSmall,
-                color = if (uiState.isProcessing) MaterialTheme.colorScheme.onSurfaceVariant
-                    .copy(alpha = 0.4f) else MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.clickable(enabled = !uiState.isProcessing) { viewModel.clearMask() },
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            Text("Removing object...", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+    ) {
+        IconButton(
+            onClick = { viewModel.clearMask() },
+            enabled = !uiState.isProcessing,
+        ) {
+            Icon(
+                Icons.Filled.Delete,
+                contentDescription = "Clear mask",
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(20.dp),
             )
         }
+        Text(
+            "Clear mask",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (uiState.isProcessing) MaterialTheme.colorScheme.onSurfaceVariant
+                .copy(alpha = 0.4f) else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.clickable(enabled = !uiState.isProcessing) { viewModel.clearMask() },
+        )
+    }
 
-        Spacer(modifier = Modifier.height(8.dp))
+    Spacer(modifier = Modifier.height(8.dp))
 
-        FilledTonalButton(
-            onClick = { viewModel.triggerInpainting() },
-            enabled = uiState.maskBitmap != null && !uiState.isProcessing,
-            modifier = Modifier.padding(horizontal = 12.dp),
-        ) {
-            if (uiState.isProcessing) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Removing...")
-            } else {
-                Text("Remove Object")
-            }
+    FilledTonalButton(
+        onClick = { viewModel.triggerInpainting() },
+        enabled = uiState.maskBitmap != null && !uiState.isProcessing,
+        modifier = Modifier.padding(horizontal = 12.dp),
+    ) {
+        if (uiState.isProcessing) {
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Removing...")
+        } else {
+            Text("Remove Object")
         }
     }
 }
