@@ -18,13 +18,20 @@ object MiganHandler {
         progress: ((Int, Int) -> Unit)? = null,
     ): Bitmap? = coroutineScope {
         val bytes = bridge.modelBytes ?: return@coroutineScope null
-        val tileSize = bridge.outputWidth
+
+        val interpreter = bridge.makeInterpreter()
+        val outputShape = interpreter.getOutputTensor(0).shape()
+        val isNchw = outputShape.size == 4 && outputShape[3] > 4
+        val tileSize = if (isNchw) outputShape[3] else outputShape[2]
+        val outH = if (isNchw) outputShape[2] else outputShape[1]
+        Timber.i("MiganHandler: model output shape=%s, tile=%d, outH=%d", outputShape.contentToString(), tileSize, outH)
+        interpreter.close()
 
         val origW = imageBitmap.width
         val origH = imageBitmap.height
         Timber.i("MiganHandler: image %dx%d, mask %dx%d", origW, origH, maskBitmap.width, maskBitmap.height)
 
-        val (image, w, h) = bridge.scaleToFit(imageBitmap, tileSize)
+        val (image, w, h) = LitertBridge.scaleToFit(imageBitmap, tileSize)
         Timber.i("MiganHandler: scaled to %dx%d", w, h)
 
         val maskScaled = maskBitmap.scale(w, h, false)
@@ -42,7 +49,7 @@ object MiganHandler {
         val bAcc = IntArray(w * h)
         val weight = IntArray(w * h)
 
-        val interpreter = bridge.makeInterpreter()
+        val runInterpreter = bridge.makeInterpreter()
         try {
             for (ty in 0 until tilesY) {
                 for (tx in 0 until tilesX) {
@@ -52,20 +59,22 @@ object MiganHandler {
                     val imgTile = Bitmap.createBitmap(image, offX, offY, tileSize, tileSize)
                     val maskTile = Bitmap.createBitmap(invMask, offX, offY, tileSize, tileSize)
 
-                    val outTile = inferTile(bridge, interpreter, imgTile, maskTile)
+                    val outTile = inferTile(runInterpreter, imgTile, maskTile)
                     imgTile.recycle()
                     maskTile.recycle()
 
-                    val tilePixels = IntArray(tileSize * tileSize)
-                    outTile.getPixels(tilePixels, 0, tileSize, 0, 0, tileSize, tileSize)
+                    val tw = outTile.width
+                    val th = outTile.height
+                    val tilePixels = IntArray(tw * th)
+                    outTile.getPixels(tilePixels, 0, tw, 0, 0, tw, th)
                     outTile.recycle()
 
-                    for (tiley in 0 until tileSize) {
-                        for (tilex in 0 until tileSize) {
+                    for (tiley in 0 until th) {
+                        for (tilex in 0 until tw) {
                             val px = offX + tilex
                             val py = offY + tiley
                             if (px < w && py < h) {
-                                val pixel = tilePixels[tiley * tileSize + tilex]
+                                val pixel = tilePixels[tiley * tw + tilex]
                                 val idx = py * w + px
                                 rAcc[idx] += (pixel shr 16) and 0xFF
                                 gAcc[idx] += (pixel shr 8) and 0xFF
@@ -79,7 +88,7 @@ object MiganHandler {
                 }
             }
         } finally {
-            interpreter.close()
+            runInterpreter.close()
         }
         maskScaled.recycle()
         invMask.recycle()
@@ -102,15 +111,20 @@ object MiganHandler {
         upscaled
     }
 
-    private fun inferTile(bridge: LitertBridge, interp: Interpreter, imgTile: Bitmap, maskTile: Bitmap): Bitmap {
+    private fun inferTile(interp: Interpreter, imgTile: Bitmap, maskTile: Bitmap): Bitmap {
         val input = prepareInput(imgTile, maskTile)
-        val output = ByteBuffer.allocateDirect(bridge.outputWidth * bridge.outputHeight * 3 * 4)
+        val shape = interp.getOutputTensor(0).shape()
+        val isNchw = shape.size == 4 && shape[3] > 4
+        val outH = if (isNchw) shape[2] else shape[1]
+        val outW = if (isNchw) shape[3] else shape[2]
+        val channels = if (isNchw) shape[1] else shape[3]
+        val output = ByteBuffer.allocateDirect(outW * outH * channels * 4)
             .order(ByteOrder.nativeOrder())
         interp.run(input, output)
         output.rewind()
-        val floats = FloatArray(bridge.outputWidth * bridge.outputHeight * 3)
+        val floats = FloatArray(outW * outH * channels)
         for (i in floats.indices) floats[i] = output.float
-        return floatsToBitmap(bridge, floats)
+        return floatsToBitmap(floats, outW, outH)
     }
 
     private fun invertMask(mask: Bitmap): Bitmap {
@@ -155,14 +169,14 @@ object MiganHandler {
         return buffer
     }
 
-    private fun floatsToBitmap(bridge: LitertBridge, data: FloatArray): Bitmap {
-        val pixels = IntArray(bridge.outputWidth * bridge.outputHeight)
+    private fun floatsToBitmap(data: FloatArray, width: Int, height: Int): Bitmap {
+        val pixels = IntArray(width * height)
         for (i in pixels.indices) {
             val r = ((data[i * 3 + 0] + 1f) * 127.5f).toInt().coerceIn(0, 255)
             val g = ((data[i * 3 + 1] + 1f) * 127.5f).toInt().coerceIn(0, 255)
             val b = ((data[i * 3 + 2] + 1f) * 127.5f).toInt().coerceIn(0, 255)
             pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
         }
-        return Bitmap.createBitmap(pixels, bridge.outputWidth, bridge.outputHeight, Bitmap.Config.ARGB_8888)
+        return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
     }
 }

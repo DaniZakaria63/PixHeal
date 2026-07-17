@@ -25,17 +25,6 @@ class LitertBridge @Inject constructor(
     var modelBytes: MappedByteBuffer? = null
         private set
 
-    @Volatile
-    var outputWidth: Int = 512
-        private set
-
-    @Volatile
-    var outputHeight: Int = 512
-        private set
-
-    @Volatile
-    private var useFloatInput: Boolean = false
-
     var parallelism: Int = 4
         private set
 
@@ -48,6 +37,76 @@ class LitertBridge @Inject constructor(
         const val DEEPLABV3_INPUT = 520
         const val DEEPLABV3_NUM_CLASSES = 21
         const val DEEPLABV3_BG_CLASS = 0
+
+        fun scaleToFit(bitmap: Bitmap, targetSize: Int): Triple<Bitmap, Int, Int> {
+            val scale = if (bitmap.width >= bitmap.height)
+                targetSize.toFloat() / bitmap.height
+            else
+                targetSize.toFloat() / bitmap.width
+            val w = (bitmap.width * scale).toInt()
+            val h = (bitmap.height * scale).toInt()
+            return Triple(bitmap.scale(w, h, true), w, h)
+        }
+
+        fun padBitmap(source: Bitmap, targetW: Int, targetH: Int): Bitmap {
+            val padded = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(padded)
+            canvas.drawBitmap(source, 0f, 0f, null)
+            source.recycle()
+            return padded
+        }
+
+        fun pixelsToUint8Buffer(bitmap: Bitmap): ByteBuffer {
+            val w = bitmap.width
+            val h = bitmap.height
+            val pixels = IntArray(w * h)
+            bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+            val buffer = ByteBuffer.allocateDirect(w * h * 3).order(ByteOrder.nativeOrder())
+            for (p in pixels) {
+                buffer.put(((p shr 16) and 0xFF).toByte())
+                buffer.put(((p shr 8) and 0xFF).toByte())
+                buffer.put((p and 0xFF).toByte())
+            }
+            buffer.rewind()
+            return buffer
+        }
+
+        fun pixelsToFloatBuffer(bitmap: Bitmap): ByteBuffer {
+            val w = bitmap.width
+            val h = bitmap.height
+            val pixels = IntArray(w * h)
+            bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+            val buffer = ByteBuffer.allocateDirect(w * h * 3 * 4).order(ByteOrder.nativeOrder())
+            for (p in pixels) {
+                buffer.putFloat(((p shr 16) and 0xFF) / 255f)
+                buffer.putFloat(((p shr 8) and 0xFF) / 255f)
+                buffer.putFloat((p and 0xFF) / 255f)
+            }
+            buffer.rewind()
+            return buffer
+        }
+
+        fun floatsToBitmap(data: FloatArray, width: Int, height: Int): Bitmap {
+            val pixels = IntArray(width * height)
+            for (i in pixels.indices) {
+                val r = (data[i * 3 + 0] * 255f).toInt().coerceIn(0, 255)
+                val g = (data[i * 3 + 1] * 255f).toInt().coerceIn(0, 255)
+                val b = (data[i * 3 + 2] * 255f).toInt().coerceIn(0, 255)
+                pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            }
+            return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+        }
+
+        fun bytesToBitmap(data: ByteArray, width: Int, height: Int): Bitmap {
+            val pixels = IntArray(width * height)
+            for (i in pixels.indices) {
+                val r = data[i * 3 + 0].toInt() and 0xFF
+                val g = data[i * 3 + 1].toInt() and 0xFF
+                val b = data[i * 3 + 2].toInt() and 0xFF
+                pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            }
+            return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+        }
     }
 
     val isLoaded get() = modelBytes != null
@@ -60,6 +119,7 @@ class LitertBridge @Inject constructor(
         modelBytes = channel.map(
             FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength,
         )
+        modelBytes!!.rewind()
         initModel()
     }
 
@@ -70,19 +130,17 @@ class LitertBridge @Inject constructor(
         modelBytes = channel.map(
             FileChannel.MapMode.READ_ONLY, 0, file.length(),
         )
+        modelBytes!!.rewind()
         initModel()
     }
 
     private fun initModel() {
         parallelism = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
-        Timber.i("loadModel: parallelism=%d cores", parallelism)
         val temp = makeInterpreter()
         try {
-            outputHeight = temp.getOutputTensor(0).shape()[1]
-            outputWidth = temp.getOutputTensor(0).shape()[2]
-            val inputType = temp.getInputTensor(0).dataType()
-            useFloatInput = inputType == org.tensorflow.lite.DataType.FLOAT32
-            Timber.i("loadModel: output %dx%d, input dtype=%s, useFloatInput=%b", outputWidth, outputHeight, inputType, useFloatInput)
+            val shape = temp.getOutputTensor(0).shape()
+            val dtype = temp.getOutputTensor(0).dataType()
+            Timber.i("initModel: output shape=%s, dtype=%s", shape.contentToString(), dtype)
         } finally {
             temp.close()
         }
@@ -115,78 +173,24 @@ class LitertBridge @Inject constructor(
 
     fun makeInterpreter(): Interpreter {
         val bytes = modelBytes ?: throw IllegalStateException("Model not loaded")
+        bytes.rewind()
         return Interpreter(bytes, Interpreter.Options().apply {
             setNumThreads(1)
         })
     }
 
-    fun scaleToFit(bitmap: Bitmap, targetSize: Int): Triple<Bitmap, Int, Int> {
-        val scale = if (bitmap.width >= bitmap.height)
-            targetSize.toFloat() / bitmap.height
-        else
-            targetSize.toFloat() / bitmap.width
-        val w = (bitmap.width * scale).toInt()
-        val h = (bitmap.height * scale).toInt()
-        return Triple(bitmap.scale(w, h, true), w, h)
+    data class ModelSession(
+        val interpreter: Interpreter,
+        val outputWidth: Int,
+        val outputHeight: Int,
+    ) {
+        fun close() { interpreter.close() }
     }
 
-    fun padBitmap(source: Bitmap, targetW: Int, targetH: Int): Bitmap {
-        val padded = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(padded)
-        canvas.drawBitmap(source, 0f, 0f, null)
-        source.recycle()
-        return padded
-    }
-
-    fun pixelsToUint8Buffer(bitmap: Bitmap): ByteBuffer {
-        val w = bitmap.width
-        val h = bitmap.height
-        val pixels = IntArray(w * h)
-        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
-        val buffer = ByteBuffer.allocateDirect(w * h * 3).order(ByteOrder.nativeOrder())
-        for (p in pixels) {
-            buffer.put(((p shr 16) and 0xFF).toByte())
-            buffer.put(((p shr 8) and 0xFF).toByte())
-            buffer.put((p and 0xFF).toByte())
-        }
-        buffer.rewind()
-        return buffer
-    }
-
-    fun pixelsToFloatBuffer(bitmap: Bitmap): ByteBuffer {
-        val w = bitmap.width
-        val h = bitmap.height
-        val pixels = IntArray(w * h)
-        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
-        val buffer = ByteBuffer.allocateDirect(w * h * 3 * 4).order(ByteOrder.nativeOrder())
-        for (p in pixels) {
-            buffer.putFloat(((p shr 16) and 0xFF) / 255f)
-            buffer.putFloat(((p shr 8) and 0xFF) / 255f)
-            buffer.putFloat((p and 0xFF) / 255f)
-        }
-        buffer.rewind()
-        return buffer
-    }
-
-    fun floatsToBitmap(data: FloatArray): Bitmap {
-        val pixels = IntArray(outputWidth * outputHeight)
-        for (i in pixels.indices) {
-            val r = (data[i * 3 + 0] * 255f).toInt().coerceIn(0, 255)
-            val g = (data[i * 3 + 1] * 255f).toInt().coerceIn(0, 255)
-            val b = (data[i * 3 + 2] * 255f).toInt().coerceIn(0, 255)
-            pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-        }
-        return Bitmap.createBitmap(pixels, outputWidth, outputHeight, Bitmap.Config.ARGB_8888)
-    }
-
-    fun bytesToBitmap(data: ByteArray): Bitmap {
-        val pixels = IntArray(outputWidth * outputHeight)
-        for (i in pixels.indices) {
-            val r = data[i * 3 + 0].toInt() and 0xFF
-            val g = data[i * 3 + 1].toInt() and 0xFF
-            val b = data[i * 3 + 2].toInt() and 0xFF
-            pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-        }
-        return Bitmap.createBitmap(pixels, outputWidth, outputHeight, Bitmap.Config.ARGB_8888)
+    fun createSession(): ModelSession {
+        val interp = makeInterpreter()
+        val shape = interp.getOutputTensor(0).shape()
+        Timber.i("createSession: output shape %s", shape.contentToString())
+        return ModelSession(interp, shape[2], shape[1])
     }
 }

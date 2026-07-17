@@ -19,7 +19,7 @@ object Deeplabv3Handler {
         val h = bitmap.height
 
         val scaled = bitmap.scale(INPUT_SIZE, INPUT_SIZE, true)
-        val input = bridge.pixelsToUint8Buffer(scaled)
+        val input = LitertBridge.pixelsToUint8Buffer(scaled)
         scaled.recycle()
 
         val interp = bridge.makeInterpreter()
