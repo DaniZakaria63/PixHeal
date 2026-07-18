@@ -1,8 +1,4 @@
-package id.my.daniza.local
-
-import androidx.room.ColumnInfo
-import androidx.room.Entity
-import androidx.room.PrimaryKey
+package id.my.daniza.local.project
 
 @Entity(tableName = "projects")
 data class ProjectEntity(

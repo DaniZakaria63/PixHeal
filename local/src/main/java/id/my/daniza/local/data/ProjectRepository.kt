@@ -1,18 +1,17 @@
-package id.my.daniza.local
+package id.my.daniza.local.data
 
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
-import androidx.core.net.toUri
-import dagger.hilt.android.qualifiers.ApplicationContext
+import id.my.daniza.local.project.ProjectDao
+import id.my.daniza.local.project.ProjectEntity
+import id.my.daniza.local.project.ProjectHandler
 import kotlinx.coroutines.flow.Flow
 import java.io.File
 import java.io.FileOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
-import androidx.core.graphics.scale
-import id.my.daniza.local.data.FileNameObj
 
 @Singleton
 class ProjectRepository @Inject constructor(
@@ -110,7 +109,7 @@ class ProjectRepository @Inject constructor(
 
     suspend fun deleteProject(id: Long) {
         projectDao.deleteProject(id)
-        val dir = File(context.filesDir, "${FileNameObj.ProjectFolder}/$id")
+        val dir = File(context.filesDir, "${id.my.daniza.local.model.FileNameObj.ProjectFolder}/$id")
         if (dir.exists()) dir.deleteRecursively()
     }
 

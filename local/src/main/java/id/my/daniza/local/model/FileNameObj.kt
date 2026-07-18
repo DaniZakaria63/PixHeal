@@ -1,4 +1,4 @@
-package id.my.daniza.local.data
+package id.my.daniza.local.model
 
 object FileNameObj {
     const val ProjectFolder = "projects"

@@ -19,8 +19,8 @@ import androidx.core.net.toUri
 import androidx.core.graphics.createBitmap
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
-import id.my.daniza.local.ProjectHandler
-import id.my.daniza.local.ProjectRepository
+import id.my.daniza.local.project.ProjectHandler
+import id.my.daniza.local.data.ProjectRepository
 import id.my.daniza.pixheal.data.editing.EditEffectManager
 import id.my.daniza.pixheal.data.editing.EditStep
 import id.my.daniza.pixheal.data.editing.EditType
@@ -37,14 +37,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext

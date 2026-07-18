@@ -1,10 +1,9 @@
 package id.my.daniza.pixheal.data.editing
 
-import id.my.daniza.local.ProjectHandler
+import id.my.daniza.local.project.ProjectHandler
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import timber.log.Timber
-import java.io.File
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
