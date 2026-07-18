@@ -1,6 +1,7 @@
 package id.my.daniza.pixheal.data.ui
 
 import android.graphics.Bitmap
+import android.graphics.Bitmap.CompressFormat
 import android.net.Uri
 import id.my.daniza.pixheal.data.editing.EditStep
 
@@ -81,9 +82,6 @@ data class EditUiState(
     val isMaskDrawing: Boolean = false,
     val brushRadius: Float = 30f,
     val showDrawGuide: Boolean = false,
-    val modelAvailable: Boolean = false,
-    val isCheckingModel: Boolean = false,
-    val showDownloadDialog: Boolean = false,
     val basicSubTool: BasicEditSubTool = BasicEditSubTool.ADJUST,
     val basicValues: BasicAdjustValues = BasicAdjustValues(),
     val previewBitmap: Bitmap? = null,
@@ -97,4 +95,9 @@ data class EditUiState(
     val bgHardness: Float = 0.5f,
     val bgEdgeSoften: Float = 0f,
     val isSegmenting: Boolean = false,
+    val exportFormat: CompressFormat = CompressFormat.JPEG,
+    val exportQuality: Int = 95,
+    val exportInProgress: Boolean = false,
+    val exportCompleted: Boolean = false,
+    val exportSavedUri: Uri? = null,
 )

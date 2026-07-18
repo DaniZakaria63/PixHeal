@@ -9,14 +9,13 @@ import android.graphics.Matrix
 import android.net.Uri
 import dagger.hilt.android.qualifiers.ApplicationContext
 import id.my.daniza.litert.LitertBridge
-import id.my.daniza.local.data.FileNameObj
+import id.my.daniza.litert.data.BitmapOps
 import id.my.daniza.pixheal.data.ui.BasicAdjustValues
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -36,7 +35,7 @@ class EditEffectManager @Inject constructor(
     private enum class LoadedModel { NONE, ESRGAN, AOTGAN, DEEPLABV3 }
 
     suspend fun enhance(uri: Uri, qualityMode: Boolean = false): EffectResult = withContext(Dispatchers.IO) {
-        val scaleTarget = if (qualityMode) LitertBridge.MODE_QUALITY else LitertBridge.MODE_FAST
+        val scaleTarget = if (qualityMode) BitmapOps.MODE_QUALITY else BitmapOps.MODE_FAST
         Timber.i("enhance: %s mode (target=%d)", if (qualityMode) "quality" else "fast", scaleTarget)
         val start = System.currentTimeMillis()
 
@@ -74,12 +73,6 @@ class EditEffectManager @Inject constructor(
         val elapsed = System.currentTimeMillis() - start
         Timber.i("inpaint: done in %dms, output %dx%d", elapsed, final.width, final.height)
         EffectResult.Success(final)
-    }
-
-    fun isAotganModelDownloaded(): Pair<Boolean, File> {
-        val dir = File(context.filesDir, FileNameObj.ModelFolder)
-        val model = File(dir, FileNameObj.ModelAOTGAN)
-        return Pair(model.exists() && model.length() > 0, model)
     }
 
     suspend fun applyBasicAdjustments(uri: Uri, values: BasicAdjustValues): EffectResult = withContext(Dispatchers.IO) {
@@ -488,11 +481,7 @@ class EditEffectManager @Inject constructor(
             try {
                 when (target) {
                     LoadedModel.ESRGAN -> litertBridge.loadModel("esrgan/real_esrgan_x4plus.tflite")
-                    LoadedModel.AOTGAN -> {
-                        val (isValid, file) = isAotganModelDownloaded()
-                        if (isValid) return "AOT-GAN model file not found"
-                        litertBridge.loadModelFromFile(file)
-                    }
+                    LoadedModel.AOTGAN -> litertBridge.loadModel("migan/migan_fp16.tflite")
                     LoadedModel.NONE -> return null
                     LoadedModel.DEEPLABV3 -> litertBridge.loadModel("deeplabv3/deeplabv3_plus_mobilenet.tflite")
                 }

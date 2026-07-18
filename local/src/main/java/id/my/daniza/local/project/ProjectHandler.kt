@@ -1,8 +1,7 @@
-package id.my.daniza.local
+package id.my.daniza.local.project
 
 import android.content.Context
-import dagger.hilt.android.qualifiers.ApplicationContext
-import id.my.daniza.local.data.FileNameObj
+import id.my.daniza.local.model.FileNameObj
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -17,10 +16,9 @@ class ProjectHandler @Inject constructor(
 
     fun openProject(id: Long) {
         if (projectId != 0L && projectId != id) {
-            // A different project is still active (e.g. its ViewModel.onCleared()
-            // hasn't run yet). Close it before switching so only one project is
-            // ever active — edit state is already persisted on every pushStep.
-            projectId = 0L
+            throw IllegalStateException(
+                "Cannot open project $id while $projectId is active. Call closeProject() first."
+            )
         }
         projectId = id
     }
